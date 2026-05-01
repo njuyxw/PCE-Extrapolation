@@ -26,7 +26,7 @@ from tqdm import tqdm
 
 from ..data import OPVPairDataset, build_split
 from ..models import build_predictor
-from .metrics import regression_metrics
+from .metrics import ranking_metrics, regression_metrics
 
 
 @dataclass(frozen=True)
@@ -148,16 +148,22 @@ class PCETrainer:
             model.load_state_dict(ckpt["state_dict"])
         preds, actuals, ids = self._predict(model, test_loader, y_mean, y_std)
         m = regression_metrics(preds, actuals)
+        r = ranking_metrics(preds, actuals)
         result = {
             "fold": fold_id + 1,
             "n_train": int(len(train_idx)),
             "n_val": int(len(val_idx)),
             "n_test": int(len(test_idx)),
             "test_mae": m.mae, "test_rmse": m.rmse, "test_r2": m.r2,
+            "test_spearman": r.spearman, "test_kendall": r.kendall,
+            "test_top10": r.top10_precision, "test_top20": r.top20_precision,
+            "test_ndcg10": r.ndcg_at_10,
         }
         pd.DataFrame({"Mol_ID": ids, "Actual": actuals, "Predicted": preds}).to_csv(
             self.out_dir / f"fold{fold_id+1}_predictions.csv", index=False)
-        print(f"[Fold {fold_id+1}] R²={m.r2:.4f} MAE={m.mae:.4f} RMSE={m.rmse:.4f}")
+        print(f"[Fold {fold_id+1}] R²={m.r2:.4f} MAE={m.mae:.4f} | "
+              f"Spearman={r.spearman:.4f} Kendall={r.kendall:.4f} "
+              f"top10={r.top10_precision:.2f} NDCG@10={r.ndcg_at_10:.4f}")
         return result
 
     # ------------------------------------------------------------------ phases
@@ -243,6 +249,11 @@ class PCETrainer:
         results = pd.DataFrame(rows)
         results.to_csv(self.out_dir / "fold_summary.csv", index=False)
         if len(results) > 1:
-            print(f"\n>>> Mean R²={results['test_r2'].mean():.4f} ± {results['test_r2'].std():.4f}"
-                  f" | MAE={results['test_mae'].mean():.4f}")
+            print(
+                f"\n>>> Mean R²={results['test_r2'].mean():.4f} ± {results['test_r2'].std():.4f}"
+                f" | MAE={results['test_mae'].mean():.4f}"
+                f" | Spearman={results['test_spearman'].mean():.4f}"
+                f" | top10={results['test_top10'].mean():.2f}"
+                f" | NDCG@10={results['test_ndcg10'].mean():.4f}"
+            )
         return results

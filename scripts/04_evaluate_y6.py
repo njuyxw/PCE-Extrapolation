@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.data import OPVPairDataset  # noqa: E402
 from src.models import build_predictor  # noqa: E402
-from src.training.metrics import regression_metrics  # noqa: E402
+from src.training.metrics import ranking_metrics, regression_metrics  # noqa: E402
 from src.utils import load_config, set_seed  # noqa: E402
 
 
@@ -77,12 +77,14 @@ def main() -> None:
     actuals = np.concatenate(actuals)
     ids = np.concatenate(ids)
     m = regression_metrics(preds, actuals)
+    r = ranking_metrics(preds, actuals)
 
     pd.DataFrame({"Mol_ID": ids, "Actual": actuals, "Predicted": preds}).to_csv(
         out_path / "predictions.csv", index=False)
-    summary = {"csv": str(csv_path), "n": int(len(preds)),
-               "r2": m.r2, "mae": m.mae, "rmse": m.rmse,
-               "checkpoint": str(fold_ckpt)}
+    summary = {
+        "csv": str(csv_path), "n": int(len(preds)), "checkpoint": str(fold_ckpt),
+        **m.to_dict(), **r.to_dict(),
+    }
     with open(out_path / "summary.json", "w") as f:
         json.dump(summary, f, indent=2)
     print(json.dumps(summary, indent=2))

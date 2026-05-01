@@ -22,6 +22,7 @@ env/
 # Project artefacts
 checkpoints/*.pt
 checkpoints/*.pth
+checkpoints/*.json
 outputs/
 runs/
 wandb/

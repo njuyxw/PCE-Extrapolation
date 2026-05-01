@@ -25,6 +25,9 @@ external checkpoints are used.**
 
 ## Results
 
+All numbers below are computed by `scripts/05_rank_from_predictions.py`
+from the saved per-fold prediction CSVs.
+
 ### Random 5-fold (paper protocol)
 
 `split.kind=random_kfold split.kwargs.n_splits=5 split.kwargs.seed=3407`
@@ -38,18 +41,41 @@ external checkpoints are used.**
 experimental HOMO/LUMO finetune on OPV²D plus a slightly weaker Stage 1
 (val_acc 0.972 here vs paper 0.99997).
 
-### Extrapolation splits (same trained P³)
+### Ranking quality (all from-scratch, same trained P³)
 
-| Split | R² | MAE | RMSE | Notes |
-|---|---|---|---|---|
-| `scaffold_acceptor` | **0.6855** | 1.75 | 2.15 | unseen acceptor Bemis-Murcko scaffolds (n_test=23) |
-| `high_pce_holdout` (q=0.85) | **-8.97** | 3.71 | 3.92 | top 15 % PCE held out (n_test=229) |
+For material discovery, getting the *order* of candidates right matters as
+much as the absolute MAE. Spearman ρ measures monotonic rank correlation;
+top-K precision = |topK_pred ∩ topK_true| / K; NDCG@10 is gain-weighted
+ranking with the true PCE as relevance score.
 
-The high-PCE holdout R² is far below 0 — i.e., **worse than predicting the
-train-set mean.** Diagnostic on this run: actual test PCEs span 11.9-17.8
-while predictions cap at ~10. P³ cannot emit values above its training
-range, a textbook regression-to-the-mean failure on a held-out
-distribution tail.
+| Split | R² | MAE | Spearman ρ | Kendall τ | top10 | top20 | NDCG@10 |
+|---|---|---|---|---|---|---|---|
+| `random_kfold` (5-fold mean)    | **+0.66** | 1.66 | **+0.79** | +0.61 | **0.56** | 0.53 | **0.94** |
+| `scaffold_acceptor` (n_test=23) | **+0.69** | 1.75 | **+0.80** | +0.63 | **0.70** | 0.95\* | **0.94** |
+| `high_pce_holdout` q=0.85 (n_test=229) | **-8.97** | 3.71 | **+0.24** | +0.16 | **0.10** | 0.05 | **0.21** |
+
+\* `scaffold_acceptor` top20 is high-noise because n_test=23 — top20 is
+basically "rank the entire test set", so it's saturated when the rough
+order is right.
+
+### What this tells us
+
+1. **In-distribution and scaffold-extrapolation ranking is strong.** With
+   Spearman ρ ≈ 0.8 and NDCG@10 ≈ 0.94 on both `random_kfold` and
+   `scaffold_acceptor`, P³ does pick out genuinely high-PCE candidates
+   even when the absolute prediction is off by ~1.7 PCE on average.
+
+2. **High-PCE extrapolation breaks both regression and ranking.** R² ≪ 0
+   was already known, but Spearman drops from 0.80 to 0.24 and top10
+   precision from 0.7 to 0.10 — i.e., when the test set is *only* high-PCE
+   pairs, P³ also can't tell which one is best. Predictions cap at ~10
+   while truth spans 11.9-17.8, so within the held-out tail the predicted
+   ordering is barely better than random.
+
+3. **Ranking is the right metric for material discovery.** For
+   `high_pce_holdout`, MAE/RMSE alone hide that the *actual* failure is in
+   distinguishing which extrapolated candidate is best. NDCG@10=0.21 is
+   the headline number an algorithm aiming at OPV discovery should beat.
 
 ## Provenance
 
