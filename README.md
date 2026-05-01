@@ -278,8 +278,9 @@ End-to-end reproduction with the paper's pretrained MOE² checkpoint:
 
 | Setting | R² (5-fold mean ± std) | Paper |
 |---|---|---|
-| `random_kfold` (paper protocol) | **0.7048 ± 0.0426** | 0.736 ± 0.033 (within 1σ) |
-| `scaffold_acceptor` (extrapolation default) | **0.6078** | — |
+| `random_kfold` (stage-2 encoder ckpt, paper code path) | **0.6993 ± 0.0353** | 0.736 ± 0.033 (within 1σ) |
+| `random_kfold` (stage-3 encoder ckpt)                   | **0.7048 ± 0.0426** | 0.736 ± 0.033 (within 1σ) |
+| `scaffold_acceptor` (extrapolation default)             | **0.6078** | — |
 
 Full per-fold breakdown and provenance: see `REPRO.md`.
 

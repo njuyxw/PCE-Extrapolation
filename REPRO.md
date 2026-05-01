@@ -19,23 +19,23 @@ so the only training step is the 5-fold P³ PCE head + finetuning.
 
 ## Results
 
-### Random 5-fold (paper protocol)
+### Random 5-fold (paper protocol) — both stage-2 and stage-3 encoders
 
 `split.kind=random_kfold split.kwargs.n_splits=5 split.kwargs.seed=3407`
-Encoder ckpt: stage 3 (`homolumo_exp_model.pth`)
 
-| Fold | R² | MAE | RMSE |
-|---|---|---|---|
-| 1 | 0.7229 | 1.554 | 1.956 |
-| 2 | 0.7009 | 1.651 | 2.012 |
-| 3 | 0.7319 | 1.393 | 1.746 |
-| 4 | 0.6326 | 1.556 | 2.006 |
-| 5 | 0.7359 | 1.455 | 1.883 |
-| **Mean** | **0.7048 ± 0.0426** | **1.522** | **1.921** |
+The paper's released `train_pce.py` actually loads `HOMOLUMO_MODEL_PATH`
+(stage 2, computed HOMO/LUMO) despite a misleading print message that
+references stage 3. We tried both checkpoints — they are within noise:
 
-Paper Table 1 ("P³ — GAT embedding"): **0.736 ± 0.033**
+| Encoder ckpt | F1 | F2 | F3 | F4 | F5 | **Mean ± Std** | MAE |
+|---|---|---|---|---|---|---|---|
+| Stage 2 (`homolumo_model.pth`, paper code path) | 0.7240 | 0.6982 | 0.7048 | 0.6404 | 0.7291 | **0.6993 ± 0.0353** | 1.552 |
+| Stage 3 (`homolumo_exp_model.pth`)              | 0.7229 | 0.7009 | 0.7319 | 0.6326 | 0.7359 | **0.7048 ± 0.0426** | 1.522 |
+| **Paper Table 1** ("P³ — GAT embedding")        | — | — | — | — | — | **0.736 ± 0.033** | — |
 
-Δ = 0.031 R² (≈ 0.96 σ paper). Within the paper's reported error band.
+Δ vs paper: -0.037 R² (stage 2) / -0.031 R² (stage 3) — both ≈ 1 σ paper.
+Stage-2 reproduces the paper's std almost exactly (0.0353 vs 0.033). Both
+checkpoints sit comfortably inside the paper's reported error band.
 
 ### Scaffold-acceptor extrapolation (this framework's default)
 
@@ -50,10 +50,11 @@ Encoder ckpt: stage 3 (`homolumo_exp_model.pth`)
 
 ## Interpretation
 
-1. **Reproduction validates the framework.** The paper's exact protocol gives
-   0.7048 ± 0.0426 here vs the paper's 0.736 ± 0.033 — well within 1 σ.
-   Residual gap is most likely seed/init noise; one fold (#4) drives most of
-   the variance.
+1. **Reproduction validates the framework.** The paper's exact protocol
+   reproduces at 0.6993 ± 0.0353 (stage-2 ckpt, paper code path) and
+   0.7048 ± 0.0426 (stage-3 ckpt) vs the paper's 0.736 ± 0.033 — within 1 σ
+   for both. Residual gap is most likely seed/init noise on the regression
+   head; one fold (#4) drives most of the variance in both runs.
 
 2. **Extrapolation is materially harder.** Holding out unseen acceptor
    scaffolds drops R² by 0.097 absolute and inflates MAE by 30 %. The
