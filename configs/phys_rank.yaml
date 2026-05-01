@@ -1,0 +1,78 @@
+# --------------------------------------------------------------------------
+# phys_rank: physics-anchored multi-task ranking algorithm.
+#
+# Run:
+#   python scripts/06_train_phys_rank.py --config configs/phys_rank.yaml \
+#       split.kind=high_pce_holdout split.kwargs.test_quantile=0.85
+# --------------------------------------------------------------------------
+
+seed: 42
+device: cuda
+project_name: pce_phys_rank
+
+paths:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  ckpt_dir: checkpoints
+  out_dir: outputs
+
+data:
+  opv_csv: data/processed/opv2d_clean.csv
+  y6_csv: data/processed/opv2d_y6.csv
+  lopez_csv: data/raw/lopez51k.csv
+  opv_full_csv: data/raw/opv2d.csv
+  max_smiles_len: 600
+
+# Default to high-PCE extrapolation since that is the algorithm target.
+split:
+  kind: high_pce_holdout
+  kwargs:
+    test_quantile: 0.85
+    val_frac: 0.1
+    seed: 42
+
+predictor:
+  kind: p3_physics
+  kwargs:
+    in_channels: 31
+    edge_dim: 15
+    hidden_channels: 512
+    out_channels: 512
+    homolumo_targets: 2
+    pce_targets: 1
+    dropout_rate: 0.25
+    num_heads: 8
+    encoder_kind: moe2
+    voc_offset: 0.30
+    voc_clamp_min: 0.0
+    voc_clamp_max: 2.5
+    voc_residual_scale: 0.20
+    ff_min: 0.30
+    ff_max: 0.85
+    jsc_min: 1.0
+    jsc_max: 35.0
+    pce_residual_scale: 0.5
+
+# Composite loss weights — λ_pce·MSE + λ_aux·MSE(Voc,Jsc,FF) + λ_rank·ListMLE + λ_phys·MSE(Voc·Jsc·FF, pce)
+loss:
+  pce: 1.0
+  aux: 0.5
+  rank: 0.5
+  phys: 0.1
+
+trainer:
+  pretrained_encoder_ckpt: checkpoints/moe2_calc.pt
+  out_subdir: phys_rank_high_pce_q85
+  batch_size: 32
+  epochs: 100
+  warmup_epochs: 20
+  lr: 1.0e-4
+  unfreeze_lr_scale: 0.1
+  weight_decay: 5.0e-4
+  grad_clip: 1.0
+  early_stop_patience: 30
+  min_delta: 1.0e-4
+  lr_patience: 3
+  lr_factor: 0.5
+  num_workers: 2
+  device: cuda

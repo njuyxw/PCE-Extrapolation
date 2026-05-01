@@ -42,3 +42,6 @@ data/processed/*.pt
 .env
 .env.*
 !.env.example
+
+# Copyrighted reference PDFs (kept locally only)
+docs/*.pdf
