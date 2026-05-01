@@ -1,0 +1,16 @@
+{
+  "input": "/data/code/PCEextrapolation/data/raw/opv2d.csv",
+  "n_raw": 1567,
+  "n_after_smiles_len_filter": 1558,
+  "n_after_drop_nan_pce": 1558,
+  "y6_formulas": [
+    "C82H86F4N8O2S5"
+  ],
+  "y6_extra_smiles_count": 0,
+  "n_y6_holdout": 33,
+  "n_train_pool": 1525,
+  "outputs": {
+    "clean": "/data/code/PCEextrapolation/data/processed/opv2d_clean.csv",
+    "y6": "/data/code/PCEextrapolation/data/processed/opv2d_y6.csv"
+  }
+}

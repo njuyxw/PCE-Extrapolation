@@ -71,7 +71,7 @@ class PCETrainer:
     def _build_model(self) -> nn.Module:
         model = build_predictor(self.predictor_kind, **self.predictor_kwargs).to(self.device)
         if self.pretrained_ckpt and self.pretrained_ckpt.exists():
-            sd = torch.load(self.pretrained_ckpt, map_location=self.device)
+            sd = torch.load(self.pretrained_ckpt, map_location=self.device, weights_only=False)
             if hasattr(model, "load_pretrained_encoders"):
                 model.load_pretrained_encoders(sd)
                 print(f"[PCETrainer] loaded pretrained encoders from {self.pretrained_ckpt}")
@@ -144,7 +144,7 @@ class PCETrainer:
 
         # ------------------------ test ------------------------------------
         if best_path.exists():
-            ckpt = torch.load(best_path, map_location=self.device)
+            ckpt = torch.load(best_path, map_location=self.device, weights_only=False)
             model.load_state_dict(ckpt["state_dict"])
         preds, actuals, ids = self._predict(model, test_loader, y_mean, y_std)
         m = regression_metrics(preds, actuals)

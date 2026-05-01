@@ -15,6 +15,7 @@ then reference it from a yaml config: ``split.kind: my_split``.
 """
 from __future__ import annotations
 
+import inspect
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Callable
@@ -44,9 +45,27 @@ def register_split(name: str) -> Callable[[SplitFn], SplitFn]:
 
 
 def build_split(kind: str, df: pd.DataFrame, **kwargs) -> list[Fold]:
+    """Build the requested split, filtering ``kwargs`` to the target signature.
+
+    The baseline yaml carries a generic ``split.kwargs`` block (e.g. with
+    ``train_frac``). Switching ``split.kind`` from the CLI must not crash
+    because the new strategy doesn't accept those keys, so we silently drop
+    keys the target function doesn't know about and log them.
+    """
     if kind not in SPLIT_REGISTRY:
         raise KeyError(f"Unknown split `{kind}`. Available: {sorted(SPLIT_REGISTRY)}")
-    return SPLIT_REGISTRY[kind](df, **kwargs)
+    fn = SPLIT_REGISTRY[kind]
+    sig = inspect.signature(fn)
+    accepted = {
+        name for name, p in sig.parameters.items()
+        if p.kind in (inspect.Parameter.KEYWORD_ONLY,
+                      inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    } - {"df"}
+    used = {k: v for k, v in kwargs.items() if k in accepted}
+    dropped = sorted(set(kwargs) - accepted)
+    if dropped:
+        print(f"[build_split] split={kind!r} ignoring unsupported kwargs: {dropped}")
+    return fn(df, **used)
 
 
 # ---------------------------------------------------------------------------

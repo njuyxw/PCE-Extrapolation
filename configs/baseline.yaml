@@ -96,11 +96,15 @@ pretrain:
     init_from: checkpoints/moe2_mlm.pt
     epochs: 150
     batch_size: 128
-    lr: 5.0e-5
+    lr: 5.0e-5             # only used if layerwise_lr is null
     val_ratio: 0.15
     seed: 43
-    # Stage 2 freezes nothing (paper inits from MLM and trains).
-    layerwise_lr: null
+    # Paper recipe: freeze all GAT layers, train only HOMO/LUMO head + pool.
+    layerwise_lr:
+      conv1_lr: 0.0
+      conv2_lr: 0.0
+      conv3_lr: 0.0
+      head_lr:  5.0e-5
 
   stage3_exp:
     enabled: true

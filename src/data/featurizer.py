@@ -10,8 +10,12 @@ that pretrained checkpoints transfer 1:1.
 from __future__ import annotations
 
 import torch
-from rdkit import Chem
+from rdkit import Chem, RDLogger
 from torch_geometric.data import Data
+
+# Silence RDKit's per-call deprecation warnings (GetValence overload). Our
+# feature set deliberately uses the legacy signature for checkpoint compat.
+RDLogger.DisableLog("rdApp.*")
 
 # ----------------------- public constants -----------------------
 

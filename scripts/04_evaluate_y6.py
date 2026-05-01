@@ -45,7 +45,7 @@ def main() -> None:
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
     model = build_predictor(str(cfg.predictor.kind), **dict(cfg.predictor.kwargs)).to(device)
 
-    ckpt = torch.load(fold_ckpt, map_location=device)
+    ckpt = torch.load(fold_ckpt, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
     y_mean = torch.tensor(float(ckpt.get("y_mean", 0.0)), dtype=torch.float32, device=device)

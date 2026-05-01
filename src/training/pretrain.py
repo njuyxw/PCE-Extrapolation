@@ -202,28 +202,34 @@ def pretrain_homolumo(
 
     model = MOE2(**encoder_kwargs).to(device)
     if init_from is not None and Path(init_from).exists():
-        model.load_state_dict(torch.load(init_from, map_location=device))
+        model.load_state_dict(torch.load(init_from, map_location=device, weights_only=False))
         print(f"[Stage] loaded init weights from {init_from}")
 
     criterion = nn.MSELoss()
     if layerwise_lr is None:
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     else:
-        if layerwise_lr.get("conv1_lr", 0.0) == 0.0:
-            for p in model.conv1.parameters():
-                p.requires_grad = False
-        param_groups = []
-        if layerwise_lr.get("conv1_lr", 0.0) > 0:
-            param_groups.append({"params": list(model.conv1.parameters()),
-                                 "lr": layerwise_lr["conv1_lr"], "name": "conv1"})
-        param_groups += [
-            {"params": list(model.conv2.parameters()),
-             "lr": layerwise_lr.get("conv2_lr", lr), "name": "conv2"},
-            {"params": list(model.conv3.parameters()),
-             "lr": layerwise_lr.get("conv3_lr", lr), "name": "conv3"},
-            {"params": list(model.regression_head.parameters()) + list(model.pool.parameters()),
-             "lr": layerwise_lr.get("head_lr", lr), "name": "head+pool"},
+        # Layer name → (params getter, default LR key). LR == 0 freezes the layer.
+        layer_specs = [
+            ("conv1", lambda: list(model.conv1.parameters()), "conv1_lr"),
+            ("conv2", lambda: list(model.conv2.parameters()), "conv2_lr"),
+            ("conv3", lambda: list(model.conv3.parameters()), "conv3_lr"),
+            ("head+pool",
+             lambda: list(model.regression_head.parameters()) + list(model.pool.parameters()),
+             "head_lr"),
         ]
+        param_groups = []
+        for name, get_params, key in layer_specs:
+            layer_lr = float(layerwise_lr.get(key, lr))
+            if layer_lr == 0.0:
+                for p in get_params():
+                    p.requires_grad = False
+                print(f"[Stage] frozen: {name}")
+            else:
+                param_groups.append({"params": get_params(), "lr": layer_lr, "name": name})
+                print(f"[Stage] trainable: {name} @ lr={layer_lr:g}")
+        if not param_groups:
+            raise ValueError("All layers frozen — nothing to train.")
         optimizer = torch.optim.AdamW(param_groups)
 
     scaler = GradScaler(device="cuda", enabled=amp and device.type == "cuda")
