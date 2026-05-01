@@ -270,7 +270,16 @@ within-OPV²D metrics.
 
 ## Reproduction status
 
-End-to-end from-scratch reproduction (no external checkpoints) — see `REPRO.md`.
+End-to-end **from-scratch** reproduction (no external checkpoints):
+
+| Split | R² | Paper |
+|---|---|---|
+| `random_kfold` (paper protocol, 5-fold) | **0.6607 ± 0.0519** | 0.736 ± 0.033 |
+| `scaffold_acceptor` (unseen acceptor scaffolds) | **0.6855** | — |
+| `high_pce_holdout` (q=0.85, top 15 % PCE) | **-8.97** | — |
+
+Full per-fold breakdown and provenance in `REPRO.md`. Total wall time:
+~3.7 h on a single RTX 3090 (pretrain ~1.7 h + PCE ~2 h, two GPUs in parallel).
 
 Full per-fold breakdown and provenance: see `REPRO.md`.
 
