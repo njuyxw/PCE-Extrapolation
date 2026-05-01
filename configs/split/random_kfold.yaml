@@ -1,0 +1,6 @@
+# Paper baseline: random 5-fold K-fold (does NOT test extrapolation).
+split:
+  kind: random_kfold
+  kwargs:
+    n_splits: 5
+    seed: 3407

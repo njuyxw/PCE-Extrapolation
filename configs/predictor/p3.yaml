@@ -1,0 +1,12 @@
+predictor:
+  kind: p3
+  kwargs:
+    in_channels: 31
+    edge_dim: 15
+    hidden_channels: 512
+    out_channels: 512
+    homolumo_targets: 2
+    pce_targets: 1
+    dropout_rate: 0.25
+    num_heads: 8
+    encoder_kind: moe2

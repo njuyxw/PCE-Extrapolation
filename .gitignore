@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.eggs/
+*.egg-info/
+*.egg
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Project artefacts
+checkpoints/*.pt
+checkpoints/*.pth
+outputs/
+runs/
+wandb/
+
+# Caches
+*.cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Data caches (large) — keep raw csv tracked, drop processed binaries
+data/processed/*.npy
+data/processed/*.npz
+data/processed/*.pt
+
+# Local secrets / env
+.env
+.env.*
+!.env.example

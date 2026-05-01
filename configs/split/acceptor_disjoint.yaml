@@ -1,0 +1,8 @@
+# Strict acceptor identity split: test acceptors never appear in train (canonical SMILES match).
+split:
+  kind: acceptor_disjoint
+  kwargs:
+    train_frac: 0.8
+    val_frac: 0.1
+    test_frac: 0.1
+    seed: 42

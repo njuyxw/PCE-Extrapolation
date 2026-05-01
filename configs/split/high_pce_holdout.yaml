@@ -1,0 +1,7 @@
+# Extrapolation to high efficiency: top-quantile PCE pairs are test.
+split:
+  kind: high_pce_holdout
+  kwargs:
+    test_quantile: 0.85
+    val_frac: 0.1
+    seed: 42

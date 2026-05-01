@@ -1,0 +1,7 @@
+# Leave-one-paper-out: one fold per DOI with ≥ min_doi_size pairs.
+split:
+  kind: leave_one_doi_out
+  kwargs:
+    min_doi_size: 5
+    val_frac: 0.1
+    seed: 42

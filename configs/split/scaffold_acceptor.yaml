@@ -1,0 +1,8 @@
+# Acceptor scaffold split: test acceptors share no Bemis–Murcko scaffold with train.
+split:
+  kind: scaffold_acceptor
+  kwargs:
+    train_frac: 0.8
+    val_frac: 0.1
+    test_frac: 0.1
+    seed: 42

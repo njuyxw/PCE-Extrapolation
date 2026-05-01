@@ -1,0 +1,138 @@
+# --------------------------------------------------------------------------
+# Baseline config: P3 + MOE2 on OPV2D, scaffold-based extrapolation split.
+#
+# Override anything from the CLI:
+#   python scripts/03_train_pce.py --config configs/baseline.yaml \
+#       split.kind=high_pce_holdout trainer.epochs=200
+#
+# Section variants live under configs/{split,encoder,predictor,trainer}/*.yaml
+# and can be merged in by hand or by another small driver.
+# --------------------------------------------------------------------------
+
+seed: 42
+device: cuda
+project_name: pce_baseline
+
+paths:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  ckpt_dir: checkpoints
+  out_dir: outputs
+
+# --------------------------------------------------------------------------
+# Data
+# --------------------------------------------------------------------------
+data:
+  # Source CSV (OPV2D minus Y6 acceptors). Built by scripts/01_prepare_data.py.
+  opv_csv: data/processed/opv2d_clean.csv
+  # Stage-2 holdout (Y6 only). Optional; used by scripts/04_evaluate.py.
+  y6_csv: data/processed/opv2d_y6.csv
+  # Pretraining sources.
+  lopez_csv: data/raw/lopez51k.csv
+  opv_full_csv: data/raw/opv2d.csv
+  max_smiles_len: 600
+
+# --------------------------------------------------------------------------
+# Split (extrapolation by default)
+# --------------------------------------------------------------------------
+split:
+  kind: scaffold_acceptor       # see configs/split/*.yaml for alternatives
+  kwargs:
+    train_frac: 0.8
+    val_frac: 0.1
+    test_frac: 0.1
+    seed: 42
+
+# --------------------------------------------------------------------------
+# Encoder (used both standalone for pretraining and inside predictors)
+# --------------------------------------------------------------------------
+encoder:
+  kind: moe2
+  kwargs:
+    in_channels: 31
+    edge_dim: 15
+    hidden_channels: 512
+    out_channels: 512
+    regression_targets: 2
+    heads: 8
+    dropout_rate: 0.25
+
+# --------------------------------------------------------------------------
+# Predictor (PCE head)
+# --------------------------------------------------------------------------
+predictor:
+  kind: p3
+  kwargs:
+    in_channels: 31
+    edge_dim: 15
+    hidden_channels: 512
+    out_channels: 512
+    homolumo_targets: 2
+    pce_targets: 1
+    dropout_rate: 0.25
+    num_heads: 8
+    encoder_kind: moe2
+
+# --------------------------------------------------------------------------
+# Pretraining (MOE2 — three stages)
+# --------------------------------------------------------------------------
+pretrain:
+  enabled: true
+  amp: true
+  num_workers: 4
+
+  stage1_mlm:
+    enabled: true
+    ckpt: checkpoints/moe2_mlm.pt
+    epochs: 100
+    batch_size: 128
+    lr: 5.0e-5
+    val_ratio: 0.15
+    seed: 42
+
+  stage2_calc:
+    enabled: true
+    ckpt: checkpoints/moe2_calc.pt
+    init_from: checkpoints/moe2_mlm.pt
+    epochs: 150
+    batch_size: 128
+    lr: 5.0e-5
+    val_ratio: 0.15
+    seed: 43
+    # Stage 2 freezes nothing (paper inits from MLM and trains).
+    layerwise_lr: null
+
+  stage3_exp:
+    enabled: true
+    ckpt: checkpoints/moe2_exp.pt
+    init_from: checkpoints/moe2_calc.pt
+    epochs: 150
+    batch_size: 128
+    lr: 5.0e-5             # only used if layerwise_lr is null
+    val_ratio: 0.15
+    seed: 44
+    layerwise_lr:
+      conv1_lr: 0.0        # frozen
+      conv2_lr: 5.0e-6
+      conv3_lr: 1.0e-5
+      head_lr:  1.0e-4
+
+# --------------------------------------------------------------------------
+# PCE training
+# --------------------------------------------------------------------------
+trainer:
+  pretrained_encoder_ckpt: checkpoints/moe2_exp.pt   # null to train from scratch
+  out_subdir: pce_run
+  batch_size: 32
+  epochs: 100
+  warmup_epochs: 20
+  lr: 1.0e-4
+  unfreeze_lr_scale: 0.1
+  weight_decay: 5.0e-4
+  grad_clip: 1.0
+  early_stop_patience: 30
+  min_delta: 1.0e-4
+  lr_patience: 3
+  lr_factor: 0.5
+  num_workers: 4
+  device: cuda
