@@ -48,6 +48,40 @@ Encoder ckpt: stage 3 (`homolumo_exp_model.pth`)
 
 **Extrapolation gap = 0.097 R² absolute** (random 0.7048 → scaffold 0.6078).
 
+### High-PCE extrapolation (most relevant to "find better materials")
+
+`split.kind=high_pce_holdout split.kwargs.test_quantile=<q>`
+Top (1-q) PCE quantile is held out as test. Encoder ckpt: stage 2 (paper code path).
+
+| q    | test_n | actual mean / max | pred mean / max | bias  | R²       | MAE  | RMSE |
+|------|--------|-------------------|-----------------|-------|----------|------|------|
+| 0.70 |    462 | 12.13 / **17.80** | 8.40 / 9.54     | -3.73 |  **-7.25**  | 3.73 | 4.00 |
+| 0.80 |    305 | 12.78 / **17.80** | 7.91 / 9.26     | -4.87 | **-14.36**  | 4.87 | 5.06 |
+| 0.85 |    229 | 13.19 / **17.80** | 9.11 / 10.23    | -4.07 | **-11.18**  | 4.07 | 4.33 |
+| 0.90 |    154 | 13.69 / **17.80** | 9.83 / 11.02    | -3.86 |  **-9.98**  | 3.86 | 4.06 |
+
+(R² < 0 means the model is **worse than predicting the train-set mean**.
+The non-monotonicity of R² across quantiles is driven by changes in the
+held-out set's variance, not by changes in absolute predictive skill —
+MAE / max-prediction tell the cleaner story.)
+
+**Failure mode is unambiguous:** the predicted max never exceeds 11.0 for
+any cutoff, while real PCEs go up to 17.8 — the model literally cannot
+emit values beyond its training range. This is a textbook
+regression-to-the-mean failure on a held-out distribution tail.
+
+For context, the full training pool (OPV²D minus Y6) has PCE mean = 8.38
+and max = 17.80. A trivial "always predict train mean" baseline would give
+MAE ≈ 4.0–5.0 on these high-PCE test sets — within ~1 MAE of P³.
+**Standard supervised PCE prediction provides essentially zero useful
+signal for ranking high-efficiency candidates.**
+
+Implication for algorithm design: the headline R² ~ 0.7 number
+(reproduced here) is dominated by the dense low/mid-PCE region. Any new
+algorithm aimed at *discovering* better OPV materials needs to be
+evaluated specifically on this `high_pce_holdout` split — improvements
+on `random_kfold` are necessary but not sufficient.
+
 ## Interpretation
 
 1. **Reproduction validates the framework.** The paper's exact protocol
@@ -67,6 +101,13 @@ Encoder ckpt: stage 3 (`homolumo_exp_model.pth`)
    honest scaffold-acceptor split by default (`scaffold_acceptor`); the
    paper's number remains reproducible by flipping `split.kind=random_kfold`.
 
+4. **High-PCE extrapolation is the real challenge.** P³ achieves R² > 0.7
+   under random K-fold, R² ≈ 0.6 under scaffold split, and **R² ≪ 0**
+   under high-PCE holdout. The model cannot emit any prediction above
+   ~11 PCE regardless of the held-out cutoff. A new algorithm should be
+   judged primarily on whether it can extend predictions into the
+   13–18 PCE region while keeping the in-distribution metric competitive.
+
 ## Provenance
 
 | File | Origin |
@@ -77,3 +118,4 @@ Encoder ckpt: stage 3 (`homolumo_exp_model.pth`)
 | `outputs/repro_random_kfold/` | 5-fold paper-protocol run, ~1 h on RTX 3090 |
 | `outputs/repro_scaffold_acceptor/` | scaffold extrapolation run, ~10 min |
 | `outputs/repro_random_kfold_stage2/` | optional cross-check using stage-2 ckpt (the original paper code path) |
+| `outputs/repro_high_pce_q70/` `q80/` `q85/` `q90/` | high-PCE extrapolation sweep, ~10 min each on RTX 3090 |

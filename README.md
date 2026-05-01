@@ -276,11 +276,17 @@ within-OPV²D metrics.
 
 End-to-end reproduction with the paper's pretrained MOE² checkpoint:
 
-| Setting | R² (5-fold mean ± std) | Paper |
-|---|---|---|
-| `random_kfold` (stage-2 encoder ckpt, paper code path) | **0.6993 ± 0.0353** | 0.736 ± 0.033 (within 1σ) |
-| `random_kfold` (stage-3 encoder ckpt)                   | **0.7048 ± 0.0426** | 0.736 ± 0.033 (within 1σ) |
-| `scaffold_acceptor` (extrapolation default)             | **0.6078** | — |
+| Setting | R² | MAE | Paper |
+|---|---|---|---|
+| `random_kfold` 5-fold (stage-2 ckpt, paper code path) | **0.6993 ± 0.0353** | 1.55 | 0.736 ± 0.033 (within 1σ) |
+| `random_kfold` 5-fold (stage-3 ckpt)                   | **0.7048 ± 0.0426** | 1.52 | 0.736 ± 0.033 (within 1σ) |
+| `scaffold_acceptor` (extrapolation default)             | **0.6078** | 1.98 | — |
+| `high_pce_holdout` q=0.85 (top 15 % PCE held out)      | **−11.18** | 4.07 | — |
+| `high_pce_holdout` q=0.90 (top 10 % PCE held out)      | **−9.98**  | 3.86 | — |
+
+**The `high_pce_holdout` numbers are the most important for material
+discovery.** The model cannot emit any prediction above ~11 PCE while
+real values reach 17.8 — beating P³ here is an open challenge.
 
 Full per-fold breakdown and provenance: see `REPRO.md`.
 
