@@ -342,6 +342,70 @@ Findings:
 the leftmost point of the median-NDCG plateau, so it spends as little
 "physics weight" as possible while still capturing the magnitude floor.
 
+### α sweep on `random_kfold` (5 folds, seed=3407)
+
+`scripts/11_ensemble_random_kfold.py` runs the same ensemble on the
+in-distribution split. Each fold uses its own `fold{i}_best.pt` (no
+test-set leakage across folds).
+
+| α | R² mean ± std | MAE | Spearman | top10 | NDCG@10 ± std |
+|---|---|---|---|---|---|
+| 0.0 (learned only) | **+0.580 ± 0.056** | 1.85 | 0.752 | 0.54 | 0.926 ± 0.028 |
+| 0.1 | +0.578 ± 0.042 | 1.83 | 0.753 | 0.54 | 0.926 ± 0.028 |
+| 0.2 | +0.517 ± 0.047 | 1.93 | **0.754** | 0.54 | **0.927** ± 0.029 |
+| 0.3 | +0.395 ± 0.058 | 2.13 | 0.753 | 0.54 | 0.923 ± 0.032 |
+| 0.4 | +0.213 ± 0.070 | 2.43 | 0.742 | 0.52 | 0.920 ± 0.033 |
+| 0.5 | -0.028 ± 0.082 | 2.80 | 0.718 | 0.54 | 0.922 ± 0.032 |
+| 0.6 | -0.330 ± 0.099 | 3.21 | 0.661 | 0.52 | 0.918 ± 0.028 |
+| 0.7 | -0.691 ± 0.122 | 3.66 | 0.540 | 0.52 | 0.922 ± 0.028 |
+| 0.8 | -1.113 ± 0.155 | 4.13 | 0.324 | 0.50 | 0.917 ± 0.033 |
+| 0.9 | -1.594 ± 0.199 | 4.61 | 0.066 | 0.46 | 0.906 ± 0.028 |
+| 1.0 (physics only) | -2.135 ± 0.254 | 5.11 | -0.131 | 0.00 | 0.328 ± 0.057 |
+
+Findings:
+
+1. **NDCG@10 is flat at ~0.92 across α ∈ [0.0, 0.9]** — almost
+   completely insensitive to α. This is because on the dense bulk the
+   true top-10 is dominated by molecules that both physics and learned
+   identify as good; blending preserves their relative ordering.
+   Ranking only collapses at α=1.0 where physics's bulk anti-correlation
+   (Spearman -0.13) wipes out the signal.
+
+2. **R²/MAE prefer α near 0** — opposite of `high_pce_holdout`. Pure
+   learned R²=+0.58 vs pure physics R²=-2.14. R² crosses zero around α
+   ≈ 0.5, exactly the value that wins on the tail. The two regimes
+   prefer *opposite* operating points.
+
+3. **At α=0.5 (the tail winner): random_kfold R² collapses to ~0**
+   (-0.03), Spearman drops 0.04, NDCG@10 only loses 0.005. So a global
+   α=0.5 spends ~0.6 R² on the bulk to gain ~5 R² on the tail — still a
+   good trade overall, but not a free lunch.
+
+### Cross-regime recommendation
+
+| Regime | Optimal α | R² | Spearman | NDCG@10 |
+|---|---|---|---|---|
+| `random_kfold` (in-distribution) | **α = 0.0–0.1** | +0.58 | 0.75 | 0.93 |
+| `high_pce_holdout` (extrapolation) | **α = 0.5** | -0.59 | 0.41 | 0.75 (median) |
+| **Single α that is safest in both** | **α = 0.2** | bulk: +0.52 / 0.93, tail: -2.10 / 0.66 (median 0.75) |
+
+The cleanest answer is to **let α depend on the deployment regime**.
+For OPV discovery the relevant regime is `high_pce_holdout` (we want to
+extrapolate to higher PCE), so α=0.5 is the right knob there.
+
+If a single α is required across the whole pipeline (e.g. for a
+deployed predictor that doesn't know whether the candidate is in or
+out of distribution), **α = 0.2** is the safest choice: nearly full
+in-distribution performance (R² 0.52, NDCG@10 0.93) and the full
+median ranking on the tail (NDCG@10 0.75) — only the tail R²/MAE
+suffer.
+
+This split-aware finding generalises insight #5 from the previous
+section: **the ensemble blend coefficient is itself a regime detector**.
+A future algorithm could *learn* α (or σ-gate it) from features that
+detect distribution shift on the candidate (e.g. how far its
+predicted HOMO/LUMO is from the training-set centroid).
+
 ### Robustness verdict
 
 - The physics committee provides a *stable magnitude floor*: the
@@ -387,7 +451,9 @@ For `high_pce_holdout` q=0.85 (the main material-discovery target):
 | | batch / weight_decay / grad_clip | 32 / 5e-4 / 1.0 | matches paper |
 | **Ensemble** | physics members | Scharber + Imamura + Alharbi | run on MOE² heads |
 | | mode | M3 fixed blend | beats M4 gated and M5/6 RRF |
-| | **α (physics weight)** | **0.5** | multi-seed plateau α∈[0.2, 0.5] at NDCG@10 median 0.75; α=0.5 leftmost point with R² ≈ -0.6 |
+| | **α (high_pce_holdout)** | **0.5** | tail extrapolation; multi-seed median NDCG@10 0.75 |
+| | **α (random_kfold)** | **0.0–0.1** | in-distribution; physics blend hurts R² without helping NDCG |
+| | **α (single global)** | **0.2** | safest universal — full bulk R² + full tail NDCG@10, only tail R² suffers |
 
 ### Reproduction one-liner
 
