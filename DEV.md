@@ -300,6 +300,48 @@ varies.
   whether the learned model gets the very-top molecule right, which is
   high-variance with only n_test=229 and 1 fold
 
+### Multi-seed × α sweep
+
+`scripts/10_alpha_sweep_multiseed.py` recomputes the M3 fixed-blend
+post-hoc from each seed's saved diagnostics CSV — pure numpy, no model
+loading. Sweep over α ∈ {0.0, 0.1, ..., 1.0} on the same 3 seeds:
+
+| α | R² mean ± std | MAE | Spearman | top10 | NDCG@10 mean (median) |
+|---|---|---|---|---|---|
+| 0.0 (learned only) | -3.65 ± 1.89 | 2.33 | 0.43 | 0.33 | 0.64 (0.67) |
+| 0.1 | -2.82 ± 1.51 | 2.10 | 0.44 | 0.33 | 0.66 (0.70) |
+| 0.2 | -2.10 ± 1.18 | 1.87 | 0.44 | 0.33 | 0.66 (**0.75**) |
+| 0.3 | -1.49 ± 0.89 | 1.64 | 0.44 | 0.33 | 0.65 (**0.75**) |
+| 0.4 | -0.99 ± 0.64 | 1.43 | 0.43 | 0.33 | 0.65 (**0.75**) |
+| **0.5** ← robust | **-0.59 ± 0.43** | **1.25** | 0.41 | 0.33 | 0.65 (**0.75**) |
+| 0.6 | -0.31 ± 0.26 | 1.12 | 0.38 | 0.30 | 0.63 (0.73) |
+| 0.7 | -0.13 ± 0.13 | 1.04 | 0.35 | 0.27 | 0.60 (0.67) |
+| 0.8 | -0.07 ± 0.05 | 1.02 | 0.30 | 0.20 | 0.51 (0.55) |
+| 0.9 | -0.11 ± 0.01 | 1.07 | 0.26 | 0.13 | 0.36 (0.34) |
+| 1.0 (physics only) | -0.26 ± 0.00 | 1.14 | 0.20 | 0.00 | 0.28 (0.28) |
+
+Findings:
+
+1. **Median NDCG@10 plateaus at 0.75 for α ∈ [0.2, 0.5].** The mean is
+   pulled down at low α by seed=1 (the outlier), so the median is the
+   more honest summary in this regime. The plateau is wide (4 α
+   settings tied), confirming the ensemble is robust to the exact
+   weight as long as both signals are present.
+
+2. **The single-seed (=42) winner α=0.6 was slightly over-fit.** At
+   α=0.6 the median NDCG@10 drops to 0.73, and at α=0.7 to 0.67.
+   Pulling α down to 0.5 recovers the full 0.75 ranking while only
+   modestly worsening R² (-0.31 → -0.59).
+
+3. **R²/MAE improve monotonically with α up to ~0.7.** This is the
+   physics committee dragging the magnitude floor closer to ~ 0 R²
+   (its single-mode value is -0.26). Past α=0.7 the loss of ranking
+   signal dominates and NDCG collapses with FF.
+
+**Updated recommended α: α = 0.5** (was α=0.6 from single-seed). It is
+the leftmost point of the median-NDCG plateau, so it spends as little
+"physics weight" as possible while still capturing the magnitude floor.
+
 ### Robustness verdict
 
 - The physics committee provides a *stable magnitude floor*: the
@@ -345,24 +387,34 @@ For `high_pce_holdout` q=0.85 (the main material-discovery target):
 | | batch / weight_decay / grad_clip | 32 / 5e-4 / 1.0 | matches paper |
 | **Ensemble** | physics members | Scharber + Imamura + Alharbi | run on MOE² heads |
 | | mode | M3 fixed blend | beats M4 gated and M5/6 RRF |
-| | **α (physics weight)** | **0.6** | sweep showed α∈[0.4, 0.7] is robust |
+| | **α (physics weight)** | **0.5** | multi-seed plateau α∈[0.2, 0.5] at NDCG@10 median 0.75; α=0.5 leftmost point with R² ≈ -0.6 |
 
 ### Reproduction one-liner
 
 ```bash
 # from the dev branch, with pretrained moe2_calc.pt already in checkpoints/
-python scripts/07_train_rank_focal.py --config configs/rank_focal.yaml \
-    seed=42 trainer.out_subdir=rank_focal_high_pce_q85
 
-python scripts/09_ensemble_physics_rank.py \
-    --config configs/rank_focal.yaml \
-    ensemble.fold_ckpt=outputs/rank_focal_high_pce_q85/fold1_best.pt \
-    ensemble.alpha=0.6
+# Recommended: train 3+ seeds, then ensemble at α=0.5 on each.
+for SEED in 1 2 42; do
+    python scripts/07_train_rank_focal.py --config configs/rank_focal.yaml \
+        seed=$SEED trainer.out_subdir=rank_focal_high_pce_q85_seed$SEED
+    python scripts/09_ensemble_physics_rank.py --config configs/rank_focal.yaml \
+        ensemble.fold_ckpt=outputs/rank_focal_high_pce_q85_seed$SEED/fold1_best.pt \
+        ensemble.alpha=0.5
+done
+
+# Then aggregate post-hoc:
+python scripts/10_alpha_sweep_multiseed.py
 ```
 
-Expected outputs (single seed):
-- `M2 (learned only)`: R² ≈ -5.4, NDCG@10 ≈ 0.67, top10 ≈ 0.40
-- `M3 (ensemble α=0.6)`: R² ≈ -0.5, NDCG@10 ≈ 0.75, top10 ≈ 0.40
+Expected (3-seed) at α=0.5:
+- `R² mean ± std` = -0.59 ± 0.43
+- `MAE` = 1.25
+- `NDCG@10 mean (median)` = 0.65 (0.75)
+- `top10 mean` = 0.33
+
+For a single-seed quick-check (will be on the noisy side):
+- single-seed at α=0.5: R² ≈ -1.0, NDCG@10 ≈ 0.75, top10 = 0.40
 
 ## Insights for future iterations
 
