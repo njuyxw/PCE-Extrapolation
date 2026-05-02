@@ -268,6 +268,102 @@ This motivates **disagreement-aware blending** of physics + learned:
    learned disagreement, blend only when the model is clearly outside its
    training regime (large physics-learned gap *and* high σ_phys).
 
+## Multi-seed evaluation of the current best (algo 4 ensemble)
+
+Repeated the full pipeline (`rank_focal` train → ensemble M3 α=0.6) for
+seeds 1, 2, 42 on `high_pce_holdout` q=0.85. Same hyper-parameters,
+same MOE² stage-2 ckpt; only the model init / data-shuffling seed
+varies.
+
+### Per-seed results
+
+| seed | M2 rank_focal R² / MAE / Spear / top10 / NDCG@10 | M3 ensemble α=0.6 R² / MAE / Spear / top10 / NDCG@10 |
+|---|---|---|
+| 1  | -3.91 / 2.42 / 0.31 / 0.10 / 0.48 | -0.37 / 1.14 / 0.33 / 0.10 / 0.42 |
+| 2  | -1.65 / 1.69 / 0.53 / 0.50 / 0.76 | -0.02 / 1.00 / 0.41 / 0.40 / 0.73 |
+| 42 | -5.40 / 2.88 / 0.46 / 0.40 / 0.67 | -0.52 / 1.23 / 0.41 / 0.40 / 0.75 |
+
+### Aggregate (mean ± std and median)
+
+| Method | R² mean±std | MAE | Spearman | top10 | NDCG@10 |
+|---|---|---|---|---|---|
+| **rank_focal alone (M2)** | -3.65 ± 1.89 | 2.33 ± 0.61 | 0.43 ± 0.11 | 0.33 ± 0.21 | 0.64 ± 0.15 |
+| **ensemble M3 α=0.6**    | **-0.31 ± 0.26** | **1.12 ± 0.12** | 0.38 ± 0.05 | 0.30 ± 0.17 | 0.63 ± 0.19 |
+| ensemble (median across seeds) | -0.37 | 1.14 | 0.41 | **0.40** | **0.73** |
+
+### Stability gains from the physics ensemble
+
+- **R² std shrinks 7×** (1.89 → 0.26)
+- **MAE std shrinks 5×** (0.61 → 0.12)
+- **Spearman std shrinks 2×** (0.11 → 0.05)
+- top10 / NDCG@10 std are roughly preserved — these are dominated by
+  whether the learned model gets the very-top molecule right, which is
+  high-variance with only n_test=229 and 1 fold
+
+### Robustness verdict
+
+- The physics committee provides a *stable magnitude floor*: the
+  ensemble's R² is in [-0.52, -0.02] across seeds, vs [-5.40, -1.65] for
+  the learned model alone.
+- The ranking metrics (NDCG@10, top10) inherit the learned model's
+  variance — when seed=1 produced a poorly-ordered learned model, the
+  ensemble could not rescue its NDCG@10 (0.42), because physics_mean
+  alone is also poorly ordered (NDCG@10 ≈ 0.28). **The ensemble cannot
+  manufacture ranking signal that neither component has.**
+- Median is a more honest summary than the mean here: median NDCG@10 of
+  0.73 is consistent with the single-seed (=42) result of 0.75 we
+  reported earlier.
+
+## Recommended hyper-parameters (for someone reproducing this)
+
+For `high_pce_holdout` q=0.85 (the main material-discovery target):
+
+| Phase | Knob | Value | Note |
+|---|---|---|---|
+| **Pretrain** | stage 1 (MLM) epochs | 100 | val_acc plateau ≈ 0.97 |
+| | stage 1 lr / batch | 5e-5 / 128 | AdamW + AMP |
+| | stage 2 (calc HOMO/LUMO) epochs | 150 | freeze conv1/2/3, head only |
+| | stage 2 head lr / batch | 5e-5 / 128 | val HOMO R² ≈ 0.85 |
+| | stage 3 | *skipped* | paper PCE code path uses stage-2 ckpt |
+| **Predictor** | architecture | `p3_physics` | Voc-anchored multi-output head |
+| | Voc clamp | (0, 2.5) | Scharber range; never re-tuned |
+| | FF range (sigmoid) | (0.30, 0.85) | wide enough for OPV literature |
+| | Jsc range (sigmoid) | (1, 35) | mA/cm² — covers AM1.5G envelope |
+| | residual scales (Voc / PCE) | 0.20 / 0.50 | learned residual on top of physics |
+| **Loss** (`RankFocalLoss`) | λ_pce | 0.5 | down-weighted vs ranking |
+| | λ_aux | 0.5 | per-channel std-normalized + masked |
+| | **λ_rank** | **1.0** | position-weighted ListMLE — primary signal |
+| | λ_margin (weight) | 0.5 | top-quantile pairwise hinge |
+| | margin quantile | 0.7 | top 30 % of batch is "high target" |
+| | margin target diff min | 0.5 | only enforce on real PCE-difference pairs |
+| | margin value (hinge) | 0.3 | in standardized PCE units |
+| | λ_phys | 0.05 | gentle Voc·Jsc·FF ≈ pce_pred coupling |
+| **Sampling** | `tail_sampling_alpha` | **2.0** | weight ∝ ((PCE−min)/(max−min)+ε)^α |
+| **Training** | warmup epochs (encoders frozen) | 20 | matches paper |
+| | total epochs | 100 | early stop patience 30 |
+| | lr / finetune lr scale | 1e-4 / 0.1 | finetune lr = 1e-5 |
+| | batch / weight_decay / grad_clip | 32 / 5e-4 / 1.0 | matches paper |
+| **Ensemble** | physics members | Scharber + Imamura + Alharbi | run on MOE² heads |
+| | mode | M3 fixed blend | beats M4 gated and M5/6 RRF |
+| | **α (physics weight)** | **0.6** | sweep showed α∈[0.4, 0.7] is robust |
+
+### Reproduction one-liner
+
+```bash
+# from the dev branch, with pretrained moe2_calc.pt already in checkpoints/
+python scripts/07_train_rank_focal.py --config configs/rank_focal.yaml \
+    seed=42 trainer.out_subdir=rank_focal_high_pce_q85
+
+python scripts/09_ensemble_physics_rank.py \
+    --config configs/rank_focal.yaml \
+    ensemble.fold_ckpt=outputs/rank_focal_high_pce_q85/fold1_best.pt \
+    ensemble.alpha=0.6
+```
+
+Expected outputs (single seed):
+- `M2 (learned only)`: R² ≈ -5.4, NDCG@10 ≈ 0.67, top10 ≈ 0.40
+- `M3 (ensemble α=0.6)`: R² ≈ -0.5, NDCG@10 ≈ 0.75, top10 ≈ 0.40
+
 ## Insights for future iterations
 
 1. **Regime-aware blending is the obvious next algorithm.** Scharber
