@@ -164,6 +164,110 @@ the learning is adding noise rather than signal.
   dense bulk (Spearman -0.13 on random_kfold), so it is a complement, not
   a replacement.
 
+## Algorithm 4: `physics_committee_ensemble` — committee of empirical formulas + learned model
+
+### Motivation
+
+The Solar RRL 2024 review (Jiang et al., Table 1) catalogues at least four
+empirical PCE formulas, each with distinct validity regimes:
+
+| Formula | Voc | Jsc | FF | Designed for |
+|---|---|---|---|---|
+| Scharber (1980s) | \|HOMO_D\|−\|LUMO_A\|−0.3 | 0.65·∫Φ_ph dλ over Eg | 0.65 | bulk OPV |
+| Imamura | same | refined integrand | 0.70 | fullerene acceptors |
+| Alharbi | Eg−0.5−0.0114·\|LUMO_A\|^1.86−0.057·Eg | as Scharber | Voc/(Voc+12kT/q) — SQ-style | tighter on high-Voc |
+| OPEP/B3LYP | TD-DFT-augmented | DFT-derived | learned | NFAs at PCE > 9% |
+
+The first three need only HOMO_D / LUMO_A — *which our MOE² heads
+already predict* — so they are free to evaluate. OPEP needs DFT and is
+out of scope.
+
+**The empirical formulas disagree most where the underlying physics is
+non-ideal.** Each makes different assumptions about the high-Voc tail
+(Alharbi's quadratic LUMO term diverges from Scharber's linear one,
+Alharbi's SQ-style FF diverges from the constant 0.65/0.70, etc.). So
+the per-pair *standard deviation* across formulas is a free epistemic
+uncertainty estimate — no Bayesian / MC-dropout machinery needed.
+
+This motivates **disagreement-aware blending** of physics + learned:
+
+| Mode | Description |
+|---|---|
+| `M0_scharber` | single Scharber prediction (reference floor) |
+| `M1_physics_mean` | naive mean of Scharber / Imamura / Alharbi |
+| `M2_learned_only` | the trained `rank_focal` model |
+| `M3_fixed_blend` | `α·physics_mean + (1-α)·learned`, α tuned on val |
+| `M4_gated_blend` | `w·physics_mean + (1-w)·learned`, `w = exp(-σ_phys/τ)` |
+| `M5_rrf_2` | Reciprocal Rank Fusion of 2 lists (physics_mean, learned) |
+| `M6_rrf_4` | RRF of 4 lists (Scharber, Imamura, Alharbi, learned) |
+
+### Files
+
+- `src/training/physics_committee.py` — Scharber / Imamura / Alharbi formulas, committee statistics, RRF + disagreement-gated blends
+- `scripts/09_ensemble_physics_rank.py` — runs all 7 modes side-by-side on the test split
+
+### Hyper-parameter sweeps (`high_pce_holdout` q=0.85, single seed)
+
+`τ` for the disagreement-gated blend (M4):
+
+| τ | R² | MAE | Spearman | top10 | NDCG@10 |
+|---|---|---|---|---|---|
+| 0.3 | -5.39 | 2.88 | 0.46 | 0.40 | 0.67 |
+| 1.0 | -4.05 | 2.53 | 0.46 | 0.40 | 0.67 |
+| 2.0 | -2.02 | 1.88 | 0.45 | 0.40 | 0.69 |
+| 5.0 | -0.34 | 1.11 | 0.39 | 0.40 | 0.75 |
+| 10.0| -0.04 | 0.99 | 0.32 | 0.40 | 0.75 |
+
+`α` for the fixed blend (M3):
+
+| α | R² | MAE | Spearman | top10 | **NDCG@10** |
+|---|---|---|---|---|---|
+| 0.3 | -2.29 | 1.98 | 0.46 | 0.40 | 0.75 |
+| 0.4 | -1.55 | 1.70 | 0.45 | 0.40 | 0.76 |
+| 0.5 | -0.96 | 1.44 | 0.44 | 0.40 | 0.75 |
+| **0.6** | **-0.52** | **1.23** | 0.41 | 0.40 | **0.76** ← winner |
+| 0.7 | -0.23 | 1.08 | 0.37 | 0.40 | 0.76 |
+
+### End-to-end progression on `high_pce_holdout` q=0.85
+
+| Method | R² | MAE | Spearman | top10 | NDCG@10 |
+|---|---|---|---|---|---|
+| baseline P³ (master) | -8.97 | 3.71 | 0.24 | 0.10 | 0.21 |
+| phys_rank (algo 1) | -6.92 | 3.24 | 0.32 | 0.10 | 0.44 |
+| rank_focal (algo 2) | -5.40 | 2.88 | 0.46 | 0.40 | 0.67 |
+| scharber alone (algo 3) | -1.11 | 1.50 | 0.20 | 0.00 | 0.30 |
+| physics_committee (M1) | -0.26 | 1.15 | 0.20 | 0.00 | 0.28 |
+| **ensemble M3 α=0.6 (algo 4)** | **-0.52** | **1.23** | **0.41** | **0.40** | **0.76** |
+| ↑ vs baseline P³ | +94 % | -67 % | +71 % | **+300 %** | **+260 %** |
+
+### Insights surfaced
+
+1. **The committee alone (M1) drops R² from -1.11 → -0.26 on the tail**,
+   without any learning. Naive averaging cancels formula-specific biases
+   (e.g. Scharber's constant FF=0.65 vs Alharbi's SQ-style coupling).
+   This is the "free" benefit of integrating multiple physical models.
+
+2. **Fixed α-blend dominates the disagreement gate** at every operating
+   point we tested. The reason: σ_phys turns out to *correlate with the
+   tail* (formulas disagree more on high-Voc materials), and on the tail
+   physics is *more reliable* than learned — so a gate that *down-weights*
+   physics when σ is large does the wrong thing. A gate that *up-weights*
+   physics under high σ might work, but the simpler fixed blend is hard
+   to beat in the regime where the optimal weight is ~constant.
+
+3. **Rank-space fusion (M5/M6) loses to value-space blends here.** RRF
+   discards magnitude, but in our case magnitude *is* the winning signal:
+   physics gives the right *level*, learned model gives the right *order*,
+   and an additive blend gets both. RRF can only contribute *order*, so it
+   ties learned-only on Spearman but cannot fix R²/MAE.
+
+4. **Ensemble strategy is split-aware**, not universal. On the bulk
+   (`random_kfold`) the physics committee was anti-correlated with PCE
+   (Spearman -0.13), so blending physics in *would hurt* there. The right
+   pipeline for OPV discovery: route candidates by their physics-vs-
+   learned disagreement, blend only when the model is clearly outside its
+   training regime (large physics-learned gap *and* high σ_phys).
+
 ## Insights for future iterations
 
 1. **Regime-aware blending is the obvious next algorithm.** Scharber

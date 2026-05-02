@@ -71,6 +71,13 @@ loss:
 sampling:
   tail_alpha: 2.0
 
+ensemble:
+  fold_ckpt: outputs/rank_focal_high_pce_q85/fold1_best.pt   # learned-model ckpt
+  moe2_ckpt: checkpoints/moe2_calc.pt                          # for HOMO/LUMO
+  tau: 1.0      # disagreement-gate temperature; smaller = trust physics more
+  alpha: 0.5    # naive fixed-blend weight on physics
+  rrf_k: 60.0   # standard RRF damping
+
 trainer:
   pretrained_encoder_ckpt: checkpoints/moe2_calc.pt
   out_subdir: rank_focal_high_pce_q85
