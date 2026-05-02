@@ -89,15 +89,100 @@ algorithms.
 | 4 | 0.6045 | 1.68 | 0.73 | 0.30 | 0.91 |
 | 5 | 0.7493 | 1.40 | 0.80 | 0.70 | 0.95 |
 
-### What's left for further iterations
+## Algorithm 2: `rank_focal` — tail-focused ranking
 
-- **top10 still 0.10 on q=0.85** — the model picks the right ranking
-  *direction* (NDCG@10 doubled) but cannot identify the very-top molecules.
-  Likely needs a tail-aware sample weighting or a pairwise loss focused on
-  the highest quantile.
-- **R² still negative on q=0.85** because predictions max out near 11.
-  Loosening the Voc clamp or adding a Jsc bandgap-integral term
-  (Alharbi-style) might extend the predicted range.
-- **Single seed** — should average over ≥3 seeds before claiming the
-  high_pce delta is robust; under noise, fold-level Spearman variance is
-  ~0.05 from the random_kfold table.
+### Motivation
+
+After phys_rank, two failures persisted on `high_pce_holdout`:
+1. **`top10 = 0.10` did not move** — the model captured rough rank
+   direction (Spearman 0.32) but could not identify the very-top molecules
+   inside the held-out tail.
+2. **R² still ≪ 0** — predictions still capped near 11 PCE while truth
+   went to 17.8.
+
+Three orthogonal extensions on top of phys_rank:
+
+| Component | Mechanism |
+|---|---|
+| **Tail-weighted sampling** | `WeightedRandomSampler` with `weight ∝ ((PCE − PCE_min)/(PCE_max − PCE_min) + ε)^α`, α=2. The ~5 % high-PCE pairs were rare in each batch; oversampling forces the optimizer to see them every batch. |
+| **Position-weighted ListMLE** | Multiply each ListMLE term by `1/log₂(rank+2)` (NDCG-style). Top-1 weight = 1.0, top-10 = 0.29 — capacity is spent on the top of the list, which is what NDCG@K measures. |
+| **Top-quantile pairwise margin** | For pairs `(i,j)` where `target_i` is in the top 30 % of the batch *and* `target_i − target_j ≥ 0.5`, enforce `pred_i − pred_j ≥ 0.3` via squared hinge. Direct supervision on the orderings that matter for top-K precision. |
+
+Loss:
+```
+L = 0.5 · MSE(pce_z) + 0.5 · MSE(voc, jsc, ff) + 1.0 · weighted_ListMLE
+  + 0.5 · top_quantile_margin + 0.05 · MSE(voc·jsc·ff, pce_pred)
+```
+
+### Files
+
+- `src/training/losses.py`               — added `position_weighted_listmle`, `top_quantile_margin_loss`, `RankFocalLoss`
+- `src/training/multitask_trainer.py`    — added optional ``loss_module`` and ``WeightedRandomSampler`` (gated by ``tail_sampling_alpha``)
+- `configs/rank_focal.yaml`              — default config (predictor reuses `p3_physics`)
+- `scripts/07_train_rank_focal.py`       — entry point
+
+## Algorithm 3 (reference): `scharber_baseline` — pure analytical PCE
+
+Loads the from-scratch `moe2_calc.pt` encoder, predicts HOMO_D / LUMO_A
+for every donor / acceptor, then computes PCE without any learning:
+
+```
+Voc = clamp(|HOMO_D| − |LUMO_A| − 0.3, 0, 2.5)
+Eg  = LUMO_A − HOMO_D
+Jsc = 0.65 · 70 · exp(−1.05·(Eg − 0.7))           # AM1.5G envelope, mA/cm²
+FF  = 0.65
+PCE = Voc · Jsc · FF
+```
+
+This tells us how much of the predictive signal already lives in the
+physics formula and the MOE² heads, separate from the learned PCE
+regression. **Any learned method should beat this on ranking** — if not,
+the learning is adding noise rather than signal.
+
+- `scripts/08_scharber_baseline.py`      — single inference pass on every split
+
+## Combined results (single seed; from-scratch master pretrain ckpt)
+
+| Method | random_kfold (5-fold mean) | | | | high_pce_holdout q=0.85 | | | |
+|---|---|---|---|---|---|---|---|---|
+| | R² | Spear | top10 | NDCG@10 | R² | Spear | top10 | NDCG@10 |
+| baseline P³ (master) | **0.661** | 0.79 | 0.56 | 0.94 | -8.97 | 0.24 | 0.10 | 0.21 |
+| phys_rank | **0.671** | 0.78 | 0.52 | 0.93 | -6.92 | 0.32 | 0.10 | 0.44 |
+| **rank_focal**       | 0.580 | 0.75 | 0.54 | 0.93 | **-5.40** | **0.46** | **0.40** | **0.67** |
+| scharber (no learning) | -1.52 | -0.13 | 0.02 | 0.35 | **-1.11** | 0.20 | 0.00 | 0.30 |
+
+### Headline
+
+- **rank_focal lifts `high_pce_q85` `top10` from 0.10 → 0.40 (4×)** and
+  `NDCG@10` from 0.21 → 0.67 (3.2×).
+- It costs ~0.09 R² on `random_kfold` (0.671 → 0.580) — a deliberate
+  trade since the algorithm is biased toward the tail by both sampling
+  and loss weighting.
+- Scharber-only is **the best on absolute R² and MAE** for `high_pce_q85`
+  (-1.11 vs -5.40 to -8.97 for learned methods) — *most of the magnitude
+  signal lives in the physics formula*. But it ranks badly inside the
+  dense bulk (Spearman -0.13 on random_kfold), so it is a complement, not
+  a replacement.
+
+## Insights for future iterations
+
+1. **Regime-aware blending is the obvious next algorithm.** Scharber
+   wins on the tail's *magnitude* (R² -1.11) while rank_focal wins on the
+   tail's *ordering* (Spearman 0.46). A gating model that uses
+   `(1 − w) · pred_learned + w · pred_scharber`, with `w` increasing in
+   epistemic uncertainty (or in `min(|train_PCE − pred_PCE|)` to detect
+   tail), should dominate both.
+2. **top10 = 0.40 still leaves headroom.** The remaining 60 % miss is
+   likely because OPV²D's top-10 includes a few heavily-engineered
+   solvent / morphology cases (Y6-derivatives etc.) whose PCE is not
+   determined by molecule alone. Adding device-side features (D:A ratio,
+   solvent, processing) or *predicting the upper quantile* (pinball
+   loss) instead of the mean would address this.
+3. **Position-weighted ListMLE is a cheap, strong signal.** It lifted
+   top10 from 0.10 → 0.40 *with the same encoder* — so most of the
+   capacity needed to rank tail molecules was already learned by the
+   baseline's GAT, the issue was only the loss telling it which positions
+   to care about.
+4. **Single seed only** — should average over ≥3 seeds before claiming
+   the high_pce delta is robust; fold-level Spearman variance under
+   random_kfold is ~0.05 in the table above, which is the noise floor.

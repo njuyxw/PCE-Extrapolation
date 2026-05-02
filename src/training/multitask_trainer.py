@@ -21,6 +21,8 @@ from torch_geometric.data import Batch
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 
+from torch.utils.data import WeightedRandomSampler
+
 from ..data import OPVPairDataset, build_split
 from ..models import build_predictor
 from .losses import CompositeLoss, CompositeLossWeights
@@ -36,14 +38,18 @@ class MultiTaskPCETrainer:
         cfg: PCETrainerConfig,
         predictor_kind: str,
         predictor_kwargs: dict,
-        loss_weights: CompositeLossWeights,
+        loss_module: nn.Module | None = None,
+        loss_weights: CompositeLossWeights | None = None,
         pretrained_encoder_ckpt: str | Path | None = None,
         out_dir: str | Path = "outputs/phys_rank",
+        tail_sampling_alpha: float = 0.0,   # 0 = uniform; >0 oversamples high PCE
     ) -> None:
         self.cfg = cfg
         self.predictor_kind = predictor_kind
         self.predictor_kwargs = dict(predictor_kwargs)
+        self._loss_module = loss_module                                # if None → CompositeLoss(weights)
         self.loss_weights = loss_weights
+        self.tail_sampling_alpha = float(tail_sampling_alpha)
         self.pretrained_ckpt = Path(pretrained_encoder_ckpt) if pretrained_encoder_ckpt else None
         self.out_dir = Path(out_dir); self.out_dir.mkdir(parents=True, exist_ok=True)
         self.device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
@@ -59,12 +65,35 @@ class MultiTaskPCETrainer:
                 print(f"[MultiTaskTrainer] loaded pretrained encoders from {self.pretrained_ckpt}")
         return model
 
-    def _make_loader(self, dataset, indices: np.ndarray, shuffle: bool, drop_last: bool) -> DataLoader:
+    def _make_loader(
+        self, dataset, indices: np.ndarray, shuffle: bool, drop_last: bool,
+        weights: np.ndarray | None = None,
+    ) -> DataLoader:
+        sub = Subset(dataset, indices.tolist())
+        if weights is not None and shuffle:
+            # Tail-weighted sampling for the train split.
+            sampler = WeightedRandomSampler(
+                weights=torch.as_tensor(weights, dtype=torch.float),
+                num_samples=len(indices), replacement=True,
+            )
+            return DataLoader(
+                sub, batch_size=self.cfg.batch_size, sampler=sampler,
+                drop_last=drop_last, num_workers=self.cfg.num_workers, pin_memory=True,
+            )
         return DataLoader(
-            Subset(dataset, indices.tolist()),
-            batch_size=self.cfg.batch_size, shuffle=shuffle, drop_last=drop_last,
+            sub, batch_size=self.cfg.batch_size, shuffle=shuffle, drop_last=drop_last,
             num_workers=self.cfg.num_workers, pin_memory=True,
         )
+
+    def _tail_weights(self, dataset: OPVPairDataset, indices: np.ndarray) -> np.ndarray | None:
+        """Sample weights ∝ ((PCE - PCE_min)/(PCE_max - PCE_min) + ε)^α."""
+        if self.tail_sampling_alpha <= 0:
+            return None
+        pce = dataset.df.iloc[indices]["PCE"].to_numpy()
+        rng = pce.max() - pce.min() + 1e-6
+        norm = (pce - pce.min()) / rng                         # [0, 1]
+        w = (norm + 1e-2) ** self.tail_sampling_alpha
+        return w / w.mean()                                    # mean weight = 1
 
     @staticmethod
     def _to_branch_batches(batch, device) -> tuple:
@@ -95,13 +124,19 @@ class MultiTaskPCETrainer:
     ) -> dict:
         cfg = self.cfg
         model = self._build_model()
-        criterion = CompositeLoss(self.loss_weights).to(self.device)
+        criterion = (
+            self._loss_module.to(self.device) if self._loss_module is not None
+            else CompositeLoss(self.loss_weights).to(self.device)
+        )
 
         y_train = dataset.df.iloc[train_idx]["PCE"].to_numpy()
         y_mean = torch.tensor(float(np.mean(y_train)), dtype=torch.float32, device=self.device)
         y_std = torch.tensor(float(np.std(y_train) or 1.0), dtype=torch.float32, device=self.device)
 
-        train_loader = self._make_loader(dataset, train_idx, shuffle=True, drop_last=True)
+        train_weights = self._tail_weights(dataset, train_idx)
+        train_loader = self._make_loader(
+            dataset, train_idx, shuffle=True, drop_last=True, weights=train_weights,
+        )
         test_loader = self._make_loader(dataset, test_idx, shuffle=False, drop_last=False)
         val_loader = (
             self._make_loader(dataset, val_idx, shuffle=False, drop_last=False)
@@ -188,8 +223,8 @@ class MultiTaskPCETrainer:
 
             val_loss = self._eval_loss(model, val_loader, criterion, y_mean, y_std)
             scheduler.step(val_loss)
-            print(f"  ep{ep:3d} tr_total={tr['total']:.4f} (pce={tr['pce_mse']:.3f} "
-                  f"aux={tr['aux_mse']:.3f} rank={tr['rank']:.3f} phys={tr['phys']:.3f}) | "
+            parts = [f"{k}={v:.3f}" for k, v in tr.items() if k != "total"]
+            print(f"  ep{ep:3d} tr_total={tr['total']:.4f} ({' '.join(parts)}) | "
                   f"val={val_loss:.4f} lr={optimizer.param_groups[0]['lr']:.2e}")
 
             if val_loss + self.cfg.min_delta < best_val:

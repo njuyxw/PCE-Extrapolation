@@ -1,0 +1,89 @@
+# --------------------------------------------------------------------------
+# rank_focal: tail-focused ranking on top of phys_rank's physics anchor.
+#
+# Three differences from phys_rank:
+#   - WeightedRandomSampler oversamples high-PCE pairs during training
+#   - position-weighted ListMLE (top-1 weight = 1.0, top-10 ~ 0.29)
+#   - top-quantile pairwise margin loss focused on high-PCE pairs
+#
+# Run:
+#   python scripts/07_train_rank_focal.py --config configs/rank_focal.yaml
+# --------------------------------------------------------------------------
+
+seed: 42
+device: cuda
+project_name: pce_rank_focal
+
+paths:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  ckpt_dir: checkpoints
+  out_dir: outputs
+
+data:
+  opv_csv: data/processed/opv2d_clean.csv
+  y6_csv: data/processed/opv2d_y6.csv
+  lopez_csv: data/raw/lopez51k.csv
+  opv_full_csv: data/raw/opv2d.csv
+  max_smiles_len: 600
+
+split:
+  kind: high_pce_holdout
+  kwargs:
+    test_quantile: 0.85
+    val_frac: 0.1
+    seed: 42
+
+predictor:
+  kind: p3_physics       # reuse the physics-anchored predictor
+  kwargs:
+    in_channels: 31
+    edge_dim: 15
+    hidden_channels: 512
+    out_channels: 512
+    homolumo_targets: 2
+    pce_targets: 1
+    dropout_rate: 0.25
+    num_heads: 8
+    encoder_kind: moe2
+    voc_offset: 0.30
+    voc_clamp_min: 0.0
+    voc_clamp_max: 2.5
+    voc_residual_scale: 0.20
+    ff_min: 0.30
+    ff_max: 0.85
+    jsc_min: 1.0
+    jsc_max: 35.0
+    pce_residual_scale: 0.5
+
+# RankFocal loss weights — rank dominates; pce/phys de-emphasized.
+loss:
+  pce: 0.5
+  aux: 0.5
+  rank: 1.0
+  margin: 0.5
+  phys: 0.05
+  margin_quantile: 0.7
+  margin_target_diff_min: 0.5
+  margin_value: 0.3
+
+# Tail-weighted sampling — α=2 strongly emphasizes the high-PCE quantile.
+sampling:
+  tail_alpha: 2.0
+
+trainer:
+  pretrained_encoder_ckpt: checkpoints/moe2_calc.pt
+  out_subdir: rank_focal_high_pce_q85
+  batch_size: 32
+  epochs: 100
+  warmup_epochs: 20
+  lr: 1.0e-4
+  unfreeze_lr_scale: 0.1
+  weight_decay: 5.0e-4
+  grad_clip: 1.0
+  early_stop_patience: 30
+  min_delta: 1.0e-4
+  lr_patience: 3
+  lr_factor: 0.5
+  num_workers: 2
+  device: cuda

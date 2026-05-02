@@ -64,12 +64,139 @@ def listmle_loss(scores: torch.Tensor, targets: torch.Tensor, eps: float = 1e-6)
     return -(s_sorted - log_denoms).mean()
 
 
+def position_weighted_listmle(scores: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    """ListMLE with NDCG-style position weighting (1/log2(rank+2)).
+
+    Top-1 is weighted 1.0, top-2 is 0.63, top-10 is 0.29 — so the optimizer
+    spends most of its capacity on the highest-PCE positions, which is what
+    we care about for material discovery (top-K precision and NDCG@K).
+    """
+    if scores.numel() < 2:
+        return scores.new_zeros(())
+    n = scores.numel()
+    order = torch.argsort(targets, descending=True)
+    s_sorted = scores[order]
+    rev = torch.flip(s_sorted, dims=[0])
+    log_cumsum = torch.logcumsumexp(rev, dim=0)
+    log_denoms = torch.flip(log_cumsum, dims=[0])
+    pos = torch.arange(n, device=scores.device, dtype=scores.dtype)
+    pos_w = 1.0 / torch.log2(pos + 2.0)              # [B], top → 1.0
+    pos_w = pos_w / pos_w.sum() * n                  # renormalize so mean is 1
+    return -((s_sorted - log_denoms) * pos_w).mean()
+
+
+def top_quantile_margin_loss(
+    scores: torch.Tensor, targets: torch.Tensor,
+    quantile: float = 0.7, target_diff_min: float = 0.5, margin: float = 0.3,
+) -> torch.Tensor:
+    """Squared hinge margin loss restricted to high-target pairs.
+
+    For every pair (i, j) where target_i > target_j by at least
+    ``target_diff_min`` AND target_i is in the top ``1-quantile`` of the
+    batch, require ``pred_i - pred_j >= margin``. Returns mean squared
+    hinge violation. Zero if no qualifying pairs exist.
+    """
+    n = scores.numel()
+    if n < 2:
+        return scores.new_zeros(())
+    threshold = torch.quantile(targets, q=float(quantile))
+    is_top = targets >= threshold                                              # [B]
+    # Pair matrices.
+    diff_t = targets.unsqueeze(1) - targets.unsqueeze(0)                       # [B, B], i - j
+    diff_s = scores.unsqueeze(1) - scores.unsqueeze(0)
+    qualifying = (diff_t > target_diff_min) & is_top.unsqueeze(1)              # only i in top
+    if qualifying.sum() == 0:
+        return scores.new_zeros(())
+    hinge = torch.clamp(margin - diff_s, min=0.0) ** 2
+    return hinge[qualifying].mean()
+
+
 def masked_mse(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     """MSE that ignores rows where ``mask`` == 0."""
     if mask.sum() == 0:
         return pred.new_zeros(())
     diff = (pred - target) ** 2
     return (diff * mask).sum() / mask.sum().clamp_min(1.0)
+
+
+@dataclass(frozen=True)
+class RankFocalWeights:
+    """Weights for ``RankFocalLoss``."""
+    # Loss-component weights
+    pce: float = 0.5
+    aux: float = 0.5
+    rank: float = 1.0
+    margin_w: float = 0.5
+    phys: float = 0.05
+
+    # Hyper-parameters of the top-quantile margin loss
+    margin_quantile: float = 0.7
+    margin_target_diff_min: float = 0.5
+    margin_value: float = 0.3
+
+    def to_dict(self) -> dict[str, float]:
+        return {
+            "pce": self.pce, "aux": self.aux, "rank": self.rank,
+            "margin_w": self.margin_w, "phys": self.phys,
+            "margin_quantile": self.margin_quantile,
+            "margin_target_diff_min": self.margin_target_diff_min,
+            "margin_value": self.margin_value,
+        }
+
+
+class RankFocalLoss(nn.Module):
+    """Tail-focused composite loss for the rank_focal algorithm.
+
+    Differs from ``CompositeLoss``:
+      - **position-weighted ListMLE** (top-of-list dominates) instead of plain ListMLE
+      - additional **top-quantile pairwise margin** that pushes high-PCE
+        predictions away from lower-PCE predictions
+      - lighter PCE-MSE and physics weights (the rank loss is the primary signal)
+
+    Sample weighting (oversampling high-PCE) is applied in the trainer via a
+    ``WeightedRandomSampler``, not here.
+    """
+
+    def __init__(self, w: RankFocalWeights | None = None) -> None:
+        super().__init__()
+        self.w = w or RankFocalWeights()
+
+    def forward(
+        self, pred: dict[str, torch.Tensor], target: dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, dict[str, float]]:
+        l_pce = F.mse_loss(pred["pce_z"], target["pce_z"])
+
+        aux_pred = torch.stack([pred["voc"], pred["jsc"], pred["ff"]], dim=-1)
+        aux_tgt = target["aux"]; aux_mask = target["aux_mask"]
+        with torch.no_grad():
+            scale = aux_tgt.std(dim=0, unbiased=False).clamp_min(0.1)
+        l_aux = masked_mse(aux_pred / scale, aux_tgt / scale, aux_mask)
+
+        l_rank = position_weighted_listmle(pred["pce_z"], target["pce_z"])
+        l_margin = top_quantile_margin_loss(
+            pred["pce_z"], target["pce_z"],
+            quantile=self.w.margin_quantile,
+            target_diff_min=self.w.margin_target_diff_min,
+            margin=self.w.margin_value,
+        )
+
+        pce_phys = pred["voc"] * pred["jsc"] * pred["ff"]
+        l_phys = F.mse_loss(pce_phys, pred["pce"])
+
+        total = (
+            self.w.pce * l_pce + self.w.aux * l_aux
+            + self.w.rank * l_rank + self.w.margin_w * l_margin
+            + self.w.phys * l_phys
+        )
+        log = {
+            "total": float(total.detach().item()),
+            "pce_mse": float(l_pce.detach().item()),
+            "aux_mse": float(l_aux.detach().item()),
+            "rank": float(l_rank.detach().item()),
+            "margin": float(l_margin.detach().item()),
+            "phys": float(l_phys.detach().item()),
+        }
+        return total, log
 
 
 class CompositeLoss(nn.Module):
