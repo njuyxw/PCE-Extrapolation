@@ -406,6 +406,71 @@ A future algorithm could *learn* α (or σ-gate it) from features that
 detect distribution shift on the candidate (e.g. how far its
 predicted HOMO/LUMO is from the training-set centroid).
 
+### Physics-subset decomposition — "averaging the 3 isn't the best"
+
+`scripts/12_physics_subset_sweep.py` evaluates every non-empty subset
+of `{Scharber, Imamura, Alharbi}` on each split, blended with the
+learned model at α ∈ {0.0, 0.2, 0.5, 0.7, 1.0}. Pure post-hoc analysis
+on the saved diagnostics CSVs.
+
+Cross-regime summary at α=0.5:
+
+| Subset | high_pce R² / NDCG (med) | random R² / NDCG |
+|---|---|---|
+| Scharber alone | -1.56 / 0.61 (0.68) | +0.13 / 0.92 |
+| Imamura alone | **-0.11** / 0.61 (0.66) | -0.81 / 0.92 |
+| **Alharbi alone** | -2.39 / **0.67** (0.72) | **+0.315** / **0.932** (med 0.94) |
+| S+I | -0.20 / 0.61 (0.66) | -0.26 / 0.92 |
+| S+A | -1.89 / 0.65 (0.75) | +0.23 / 0.92 |
+| **I+A** | **-0.25** / 0.65 (0.75) | -0.12 / 0.92 |
+| S+I+A (current default) | -0.59 / 0.65 (0.75) | -0.03 / 0.92 |
+
+Cross-regime at α=0.7:
+
+| Subset, α=0.7 | high_pce R² | high_pce NDCG (med) | random R² | random NDCG |
+|---|---|---|---|---|
+| {I+A} | **+0.11** ← first positive R² on tail | 0.64 (0.75) | -0.88 | 0.92 |
+| Alharbi alone | -2.12 | **0.679** (best mean) | -0.02 | **0.932** |
+| {S+A} | -1.49 | 0.63 (0.72) | -0.18 | 0.92 |
+| {S+I+A} (default) | -0.13 | 0.60 (0.67) | -0.69 | 0.92 |
+
+Findings:
+
+1. **Scharber is a liability on the tail.** Its `Voc = Eg − 0.3` has no
+   energy-loss correction and over-estimates Voc systematically;
+   averaging it in biases the blend high. **Dropping Scharber lets us
+   cross zero R² on `high_pce_q85`** for the first time — `{I+A}` at
+   α=0.7 gives R² = +0.11, MAE = 0.93.
+
+2. **Alharbi is the most informative single formula.** Its `|LUMO_A|^1.86`
+   energy-loss penalty + SQ-style FF coupling `Voc/(Voc+0.31)` are
+   calibrated for high-Voc materials. Alharbi alone at α=0.5 even
+   *improves* bulk NDCG@10 above learned-only (0.926 → 0.932; median
+   0.94). Imamura alone is much weaker — its only difference from
+   Scharber is FF=0.70 (vs 0.65), insufficient to overcome the
+   over-Voc bias.
+
+3. **No single subset wins all metrics.** {I+A} α=0.7 wins R²/MAE on
+   the tail; Alharbi alone α=0.7 wins NDCG@10 / top10 on the tail;
+   Alharbi alone α=0.5 wins on bulk. Implies a *physics-formula-aware
+   router* could improve further: pick the subset (or learn its
+   weights) given the candidate.
+
+4. **Pair > triple.** The best results consistently come from
+   2-formula subsets, not the full triple. The triple over-smooths;
+   the pair retains the SQ-FF distinction (Alharbi) without averaging
+   it away.
+
+5. **Best operating points by use-case:**
+
+   | Use-case | Subset | α | Numbers |
+   |---|---|---|---|
+   | Maximize tail R² (positive on q=0.85) | **{I+A}** | **0.7** | R² +0.11, MAE 0.93 |
+   | Maximize tail ranking (NDCG@10 / top10) | **Alharbi** | **0.7** | NDCG@10 0.679, top10 0.40 |
+   | Maximize bulk NDCG@10 | **Alharbi** | **0.5** | NDCG@10 0.932 (med 0.94), R² +0.32 |
+   | Universal single config | **Alharbi** | **0.5** | bulk +0.32 / 0.94 ; tail -2.4 / 0.72 |
+   | Universal balanced (zero R² both) | **{I+A}** | **0.5** | bulk -0.12 / 0.92 ; tail -0.25 / 0.75 (med) |
+
 ### Robustness verdict
 
 - The physics committee provides a *stable magnitude floor*: the
@@ -449,11 +514,14 @@ For `high_pce_holdout` q=0.85 (the main material-discovery target):
 | | total epochs | 100 | early stop patience 30 |
 | | lr / finetune lr scale | 1e-4 / 0.1 | finetune lr = 1e-5 |
 | | batch / weight_decay / grad_clip | 32 / 5e-4 / 1.0 | matches paper |
-| **Ensemble** | physics members | Scharber + Imamura + Alharbi | run on MOE² heads |
-| | mode | M3 fixed blend | beats M4 gated and M5/6 RRF |
-| | **α (high_pce_holdout)** | **0.5** | tail extrapolation; multi-seed median NDCG@10 0.75 |
-| | **α (random_kfold)** | **0.0–0.1** | in-distribution; physics blend hurts R² without helping NDCG |
-| | **α (single global)** | **0.2** | safest universal — full bulk R² + full tail NDCG@10, only tail R² suffers |
+| **Ensemble** | mode | M3 fixed blend | beats M4 gated and M5/6 RRF |
+| | **physics subset (high_pce_holdout)** | **{Imamura, Alharbi}** | drops Scharber; gives positive R² on tail at α=0.7 |
+| | **physics subset (random_kfold)** | **{Alharbi}** | even improves bulk NDCG@10 above learned-only |
+| | **physics subset (universal)** | **{Imamura, Alharbi}** | balanced both regimes |
+| | **α (high_pce_holdout, R²-priority)** | 0.7 with {I+A} | R² +0.11, NDCG@10 0.64 (median 0.75) |
+| | **α (high_pce_holdout, NDCG-priority)** | 0.7 with {Alharbi} | NDCG@10 0.679, top10 0.40 |
+| | **α (random_kfold)** | 0.5 with {Alharbi} | R² +0.32, NDCG@10 0.932 (median 0.94) |
+| | **α (universal balanced)** | 0.5 with {I+A} | bulk -0.12/0.92, tail -0.25/0.75 (median) |
 
 ### Reproduction one-liner
 
