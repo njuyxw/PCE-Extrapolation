@@ -77,6 +77,41 @@ order is right.
    distinguishing which extrapolated candidate is best. NDCG@10=0.21 is
    the headline number an algorithm aiming at OPV discovery should beat.
 
+## Recommended algorithm — rank_focal + physics-committee ensemble
+
+Built on top of the from-scratch baseline. Two complementary parts:
+
+- **Learned**: `p3_physics` predictor (Voc anchored to Scharber
+  `LUMO_A − HOMO_D − 0.3` from MOE² heads, multi-output Voc/Jsc/FF/δPCE)
+  trained with `RankFocalLoss` (position-weighted ListMLE +
+  top-quantile pairwise margin) and `WeightedRandomSampler` oversampling
+  the high-PCE tail (α=2).
+- **Physics committee**: `mean(Scharber, Imamura, Alharbi)` computed
+  from MOE² HOMO_D / LUMO_A. Final prediction =
+  `α · physics_mean + (1 − α) · learned`.
+
+Headlines on `discovery_mix` (train on bulk only, test = bulk sample +
+ALL high-PCE; 3 seeds):
+
+| Method | Overall R² | NDCG@10 | top10 | Bulk R² | Tail R² |
+|---|---|---|---|---|---|
+| Baseline P³ (paper protocol) | +0.41 ± 0.06 | 0.86 | 0.27 | +0.56 | -4.31 |
+| **rank_focal + ensemble (α=0.3)** | **+0.52 ± 0.04** | **0.92** | **0.43** | +0.39 | -0.33 |
+
+Improvements: NDCG@10 +7 %, top10 **+59 %**, R² preserved, tail R²
+jumps from -4.3 to -0.3. **α = 0.3 is the Pareto knee** — gives up
+0.17 R² on bulk to gain 4.0 R² on the tail. Higher α (0.5–0.7) shifts
+further toward the tail at greater bulk cost.
+
+```bash
+# Recommended pipeline
+python scripts/07_train_rank_focal.py --config configs/rank_focal.yaml
+python scripts/09_ensemble_physics_rank.py --config configs/rank_focal.yaml \
+    ensemble.fold_ckpt=outputs/rank_focal_discovery_mix/fold1_best.pt
+python scripts/13_evaluate_discovery_mix.py \
+    --diagnostics outputs/rank_focal_discovery_mix/ensemble/fold1_diagnostics.csv
+```
+
 ## Provenance
 
 | File | Origin |

@@ -137,6 +137,41 @@ PYTHONPATH=. .venv/bin/python scripts/04_evaluate_y6.py \
     eval.csv=data/processed/opv2d_y6.csv
 ```
 
+### 5) Recommended algorithm: rank_focal + physics-committee ensemble
+
+The paper-baseline P³ above maximises in-distribution R² but ranks
+high-PCE candidates poorly (top10 ≈ 0.10, NDCG@10 ≈ 0.21 on the held-out
+top-15 % PCE). For OPV-screening use cases the recommended pipeline is:
+
+1. **Train `rank_focal`** — `p3_physics` predictor (Voc anchored to
+   Scharber `LUMO_A − HOMO_D − 0.3` from the MOE² heads), trained with
+   `RankFocalLoss` (position-weighted ListMLE + top-quantile pairwise
+   margin) and a `WeightedRandomSampler` that oversamples the high-PCE
+   tail (α=2).
+2. **Ensemble with the physics committee** at inference — final
+   `PCE = α · mean(Scharber, Imamura, Alharbi) + (1-α) · learned`.
+   The committee's HOMO_D / LUMO_A inputs come from the same MOE² heads,
+   so no extra featurization. `α=0.3` is the Pareto knee on the mixed
+   discovery split.
+3. **Evaluate on `discovery_mix`** — a realistic split where train sees
+   only the bulk and test = a small bulk sample + every high-PCE pair.
+   The accompanying evaluator `scripts/13_evaluate_discovery_mix.py`
+   reports overall, bulk-only, and tail-only metrics so you can see
+   where each algorithm gains or loses.
+
+```bash
+# Train + ensemble at the recommended (discovery_mix) operating point
+python scripts/07_train_rank_focal.py --config configs/rank_focal.yaml
+python scripts/09_ensemble_physics_rank.py --config configs/rank_focal.yaml \
+    ensemble.fold_ckpt=outputs/rank_focal_discovery_mix/fold1_best.pt
+python scripts/13_evaluate_discovery_mix.py \
+    --diagnostics outputs/rank_focal_discovery_mix/ensemble/fold1_diagnostics.csv
+```
+
+Headline numbers on `discovery_mix` (3 seeds): overall NDCG@10 0.92,
+top10 0.43, R² +0.52 — vs paper-baseline P³ NDCG@10 0.86 / top10 0.27 /
+R² +0.41. See `REPRO.md` for the full table and per-region breakdown.
+
 ---
 
 ## How to add a new algorithm

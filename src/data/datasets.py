@@ -140,11 +140,17 @@ class OPVPairDataset(Dataset):
       - ``acceptor`` : ``Data`` graph
       - ``y``        : 1-d PCE tensor (shape [1])
       - ``mol_id``   : pair identifier (int) for prediction tracking
+      - ``aux``      : 1-d tensor [Voc, Jsc, FF] (only if ``include_aux=True``).
+                       NaN-protected: missing values are replaced by 0 and a
+                       boolean mask field ``aux_mask`` indicates validity.
 
     Long SMILES (>``max_smiles_len``) are filtered for memory safety.
     """
 
-    def __init__(self, csv_path: str | Path, max_smiles_len: int = 600) -> None:
+    AUX_COLS: tuple[str, ...] = ("Voc", "Jsc", "FF")
+
+    def __init__(self, csv_path: str | Path, max_smiles_len: int = 600,
+                 include_aux: bool = False) -> None:
         super().__init__()
         df = pd.read_csv(csv_path)
         required = {"Donor SMILES", "Acceptor SMILES", "PCE"}
@@ -159,6 +165,11 @@ class OPVPairDataset(Dataset):
             df = df.copy()
             df["Mol_ID"] = range(len(df))
         self.df = df
+        self.include_aux = include_aux
+        if include_aux:
+            for c in self.AUX_COLS:
+                if c not in df.columns:
+                    raise ValueError(f"include_aux=True but column `{c}` missing.")
 
     def len(self) -> int:
         return len(self.df)
@@ -171,12 +182,19 @@ class OPVPairDataset(Dataset):
             raise ValueError(f"Invalid donor/acceptor SMILES at row {idx}")
         donor = mol_to_graph(donor_mol)
         acceptor = mol_to_graph(acceptor_mol)
-        return Data(
+        data = Data(
             donor=donor,
             acceptor=acceptor,
             y=torch.tensor([float(row["PCE"])], dtype=torch.float),
             mol_id=torch.tensor([int(row["Mol_ID"])], dtype=torch.long),
         )
+        if self.include_aux:
+            vals = [row.get(c) for c in self.AUX_COLS]
+            mask = [1.0 if (v is not None and pd.notna(v)) else 0.0 for v in vals]
+            vals = [float(v) if (v is not None and pd.notna(v)) else 0.0 for v in vals]
+            data.aux = torch.tensor(vals, dtype=torch.float).unsqueeze(0)        # [1, 3]
+            data.aux_mask = torch.tensor(mask, dtype=torch.float).unsqueeze(0)   # [1, 3]
+        return data
 
     @property
     def smiles_table(self) -> pd.DataFrame:

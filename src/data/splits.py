@@ -212,6 +212,49 @@ def high_pce_holdout(
     return [(np.sort(train_idx), np.sort(val_idx), np.sort(test_idx))]
 
 
+@register_split("discovery_mix")
+def discovery_mix(
+    df: pd.DataFrame, *,
+    high_pce_quantile: float = 0.85,
+    test_bulk_frac: float = 0.10,
+    val_frac: float = 0.10,
+    seed: int = 42,
+) -> list[Fold]:
+    """Mixed test set that mimics screening for novel high-PCE materials.
+
+    - **Train** sees only the *bulk* (PCE < ``high_pce_quantile``). The tail is
+      never used for gradient updates, simulating the real situation where
+      novel high-efficiency materials have not been catalogued yet.
+    - **Val** is a random ``val_frac`` slice of the bulk (used for early
+      stopping / ReduceLROnPlateau without leaking the tail).
+    - **Test** is a *mixture*: a random ``test_bulk_frac`` slice of the bulk
+      (validates in-distribution ranking) PLUS *every* high-PCE pair
+      (validates extrapolation). Ranking metrics on this combined set
+      directly score "given a screening pool of mostly ordinary candidates
+      and a few exceptional ones, can the model surface the exceptional
+      ones at the top?"
+    """
+    rng = np.random.default_rng(seed)
+    pce = df["PCE"].to_numpy()
+    cutoff = np.quantile(pce, high_pce_quantile)
+    tail_mask = pce >= cutoff
+
+    tail_idx = np.where(tail_mask)[0]
+    bulk_idx = np.where(~tail_mask)[0]
+    rng.shuffle(bulk_idx)
+
+    n_bulk = len(bulk_idx)
+    n_test_bulk = int(round(test_bulk_frac * n_bulk))
+    n_val = int(round(val_frac * n_bulk))
+
+    test_bulk_idx = bulk_idx[:n_test_bulk]
+    val_idx = bulk_idx[n_test_bulk : n_test_bulk + n_val]
+    train_idx = bulk_idx[n_test_bulk + n_val:]
+    test_idx = np.concatenate([test_bulk_idx, tail_idx])
+
+    return [(np.sort(train_idx), np.sort(val_idx), np.sort(test_idx))]
+
+
 @register_split("leave_one_doi_out")
 def leave_one_doi_out(
     df: pd.DataFrame, *, min_doi_size: int = 5, val_frac: float = 0.1, seed: int = 42,
