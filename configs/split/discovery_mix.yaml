@@ -1,0 +1,8 @@
+# Realistic OPV-discovery split: training sees only bulk, test = bulk sample + ALL high-PCE.
+split:
+  kind: discovery_mix
+  kwargs:
+    high_pce_quantile: 0.85
+    test_bulk_frac: 0.10
+    val_frac: 0.10
+    seed: 42
