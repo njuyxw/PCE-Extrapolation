@@ -5,7 +5,7 @@ finished before ranking metrics were wired into the trainer. For new runs,
 the trainer already writes these into ``fold_summary.csv``.
 
 Usage:
-    python scripts/05_rank_from_predictions.py outputs/repro_random_kfold \\
+    python scripts/rank_from_predictions.py outputs/repro_random_kfold \\
                                                 outputs/repro_scaffold_acceptor \\
                                                 outputs/repro_high_pce_q85
 """

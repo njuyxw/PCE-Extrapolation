@@ -7,7 +7,7 @@ The checkpoint dict written by ``PCETrainer`` contains the fold's y_mean and
 y_std, so de-normalization happens automatically.
 
 Run:
-    python scripts/04_evaluate_y6.py --config configs/baseline.yaml \\
+    python scripts/evaluate_y6.py --config configs/baseline.yaml \\
         eval.fold_ckpt=outputs/pce_run/fold1_best.pt
 """
 from __future__ import annotations

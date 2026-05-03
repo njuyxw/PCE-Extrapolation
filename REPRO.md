@@ -8,7 +8,7 @@ external checkpoints are used.**
 ## Setup
 
 - Hardware: NVIDIA RTX 3090 (24 GB), CUDA 12.1
-- Pretraining: `scripts/02_pretrain_moe2.py` (`configs/baseline.yaml`)
+- Pretraining: `scripts/pretrain_moe2.py` (`configs/baseline.yaml`)
   - **Stage 1** — MLM atom-type prediction on Lopez 51k, 100 epochs
     (best val_acc = 0.9719 @ ep 92, ~42 min)
   - **Stage 2** — calc HOMO/LUMO regression on Lopez 51k, GAT layers frozen,
@@ -16,7 +16,7 @@ external checkpoints are used.**
     (best val: HOMO R² = 0.849, LUMO R² = 0.770 @ ep 141, ~62 min)
   - Stage 3 (exp HOMO/LUMO on OPV²D union) is *not* used by the paper PCE
     protocol — skipped.
-- PCE training: `scripts/03_train_pce.py` loading the stage-2 ckpt
+- PCE training: `scripts/train_pce.py` loading the stage-2 ckpt
   (this is the path the paper's released `train_pce.py` actually executes)
   - Random 5-fold KFold, seed = 3407, batch = 32
   - 100 epochs (warmup 20 with encoders frozen + finetune 80 unfrozen at lr×0.1)
@@ -25,7 +25,7 @@ external checkpoints are used.**
 
 ## Results
 
-All numbers below are computed by `scripts/05_rank_from_predictions.py`
+All numbers below are computed by `scripts/rank_from_predictions.py`
 from the saved per-fold prediction CSVs.
 
 ### Random 5-fold (paper protocol)
@@ -105,10 +105,10 @@ further toward the tail at greater bulk cost.
 
 ```bash
 # Recommended pipeline
-python scripts/07_train_rank_focal.py --config configs/rank_focal.yaml
-python scripts/09_ensemble_physics_rank.py --config configs/rank_focal.yaml \
+python scripts/train_rank_focal.py --config configs/rank_focal.yaml
+python scripts/ensemble_physics_rank.py --config configs/rank_focal.yaml \
     ensemble.fold_ckpt=outputs/rank_focal_discovery_mix/fold1_best.pt
-python scripts/13_evaluate_discovery_mix.py \
+python scripts/evaluate_discovery_mix.py \
     --diagnostics outputs/rank_focal_discovery_mix/ensemble/fold1_diagnostics.csv
 ```
 
@@ -118,8 +118,8 @@ python scripts/13_evaluate_discovery_mix.py \
 |---|---|
 | `data/raw/lopez51k.csv`           | Lopez NFA 51k candidate database (Joule 2017) |
 | `data/raw/opv2d.csv`              | OPV²D — 1567 D-A pairs from CycleChemist `exp_dataset.csv` |
-| `data/processed/opv2d_clean.csv`  | OPV²D after `01_prepare_data.py` (1525 rows; Y6 acceptors held out) |
+| `data/processed/opv2d_clean.csv`  | OPV²D after `prepare_data.py` (1525 rows; Y6 acceptors held out) |
 | `data/processed/opv2d_y6.csv`     | Y6 holdout (33 pairs) reserved for stage-2 evaluation |
-| `checkpoints/moe2_mlm.pt`         | trained from scratch by `02_pretrain_moe2.py` (Stage 1) |
-| `checkpoints/moe2_calc.pt`        | trained from scratch by `02_pretrain_moe2.py` (Stage 2) |
-| `outputs/repro_*/`                | all 5-fold runs by `03_train_pce.py` |
+| `checkpoints/moe2_mlm.pt`         | trained from scratch by `pretrain_moe2.py` (Stage 1) |
+| `checkpoints/moe2_calc.pt`        | trained from scratch by `pretrain_moe2.py` (Stage 2) |
+| `outputs/repro_*/`                | all 5-fold runs by `train_pce.py` |

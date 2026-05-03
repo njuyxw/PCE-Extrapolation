@@ -13,7 +13,7 @@ the "ranks exceptional candidates correctly" question while running a
 single mixed test set.
 
 Usage:
-    python scripts/13_evaluate_discovery_mix.py \\
+    python scripts/evaluate_discovery_mix.py \\
         --diagnostics outputs/rank_focal_discovery_mix/ensemble/fold1_diagnostics.csv \\
                        outputs/rank_focal_discovery_mix_seed1/ensemble/fold1_diagnostics.csv \\
         --high_pce_cutoff 11.87 \\

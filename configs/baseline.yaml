@@ -2,7 +2,7 @@
 # Baseline config: P3 + MOE2 on OPV2D, scaffold-based extrapolation split.
 #
 # Override anything from the CLI:
-#   python scripts/03_train_pce.py --config configs/baseline.yaml \
+#   python scripts/train_pce.py --config configs/baseline.yaml \
 #       split.kind=high_pce_holdout trainer.epochs=200
 #
 # Section variants live under configs/{split,encoder,predictor,trainer}/*.yaml
@@ -23,9 +23,9 @@ paths:
 # Data
 # --------------------------------------------------------------------------
 data:
-  # Source CSV (OPV2D minus Y6 acceptors). Built by scripts/01_prepare_data.py.
+  # Source CSV (OPV2D minus Y6 acceptors). Built by scripts/prepare_data.py.
   opv_csv: data/processed/opv2d_clean.csv
-  # Stage-2 holdout (Y6 only). Optional; used by scripts/04_evaluate.py.
+  # Stage-2 holdout (Y6 only). Optional; used by scripts/evaluate_y6.py.
   y6_csv: data/processed/opv2d_y6.csv
   # Pretraining sources.
   lopez_csv: data/raw/lopez51k.csv

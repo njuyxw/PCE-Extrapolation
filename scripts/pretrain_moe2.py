@@ -6,7 +6,7 @@
 
 Each stage can be skipped via the config (``pretrain.stageN.enabled: false``)
 or the CLI:
-    python scripts/02_pretrain_moe2.py --config configs/baseline.yaml \\
+    python scripts/pretrain_moe2.py --config configs/baseline.yaml \\
         pretrain.stage1_mlm.enabled=false
 """
 from __future__ import annotations

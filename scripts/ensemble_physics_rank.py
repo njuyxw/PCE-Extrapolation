@@ -6,15 +6,15 @@ Combines:
      the 3-formula mean ``{Scharber, Imamura, Alharbi}``; pass a comma-list
      (e.g. ``ensemble.physics_subset='Imamura,Alharbi'``) to drop one.
   2. The learned ``rank_focal`` predictor — loaded from a fold checkpoint
-     produced by ``07_train_rank_focal.py``.
+     produced by ``train_rank_focal.py``.
 
 Final prediction = ``α · physics_subset_mean + (1-α) · learned``. Reports
 regression + ranking metrics on each fold's test set and writes a
 diagnostics CSV with per-pair Actual / Learned / Scharber / Imamura /
-Alharbi columns (used by ``13_evaluate_discovery_mix.py``).
+Alharbi columns (used by ``evaluate_discovery_mix.py``).
 
 Run:
-    python scripts/09_ensemble_physics_rank.py --config configs/rank_focal.yaml \\
+    python scripts/ensemble_physics_rank.py --config configs/rank_focal.yaml \\
         ensemble.fold_ckpt=outputs/<run>/fold1_best.pt \\
         ensemble.alpha=0.3
 """

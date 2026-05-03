@@ -8,10 +8,10 @@
 # HOMO_D / LUMO_A. α = 0.3 is the Pareto knee on the mixed test (R²
 # stays positive on bulk while the tail R² jumps from -4 to ~0).
 #
-# Train:    python scripts/07_train_rank_focal.py --config configs/rank_focal.yaml
-# Ensemble: python scripts/09_ensemble_physics_rank.py --config configs/rank_focal.yaml \
+# Train:    python scripts/train_rank_focal.py --config configs/rank_focal.yaml
+# Ensemble: python scripts/ensemble_physics_rank.py --config configs/rank_focal.yaml \
 #               ensemble.fold_ckpt=outputs/rank_focal_discovery_mix/fold1_best.pt
-# Eval:     python scripts/13_evaluate_discovery_mix.py \
+# Eval:     python scripts/evaluate_discovery_mix.py \
 #               --diagnostics outputs/rank_focal_discovery_mix/ensemble/fold1_diagnostics.csv
 # --------------------------------------------------------------------------
 
